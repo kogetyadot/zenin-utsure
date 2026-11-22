@@ -118,6 +118,15 @@ export class GameEngine {
 
     this.hud = new HudView(uiRoot, {
       onStartStage: (stageId) => this.startStage(stageId),
+      onSelectStage: (stageId) => {
+        if (this.phase === 'title' && stageId !== this.currentStage.id) {
+          const nextStage = STAGES[stageId];
+          if (nextStage) {
+            this.loadStageWorld(nextStage, (Date.now() ^ 0x2468) >>> 0);
+            this.pushHud();
+          }
+        }
+      },
       onShutter: () => {
         void this.captureShot();
       },
@@ -155,7 +164,12 @@ export class GameEngine {
   }
 
   private loadBestScores(): Record<StageId, number> {
-    const defaults: Record<StageId, number> = { wedding: 0, school_trip: 0 };
+    const defaults: Record<StageId, number> = {
+      wedding: 0,
+      school_trip: 0,
+      sports_day: 0,
+      tropical_beach: 0,
+    };
     try {
       const raw = window.localStorage.getItem(BEST_SCORE_STORAGE_KEY);
       if (!raw) return defaults;
@@ -163,6 +177,8 @@ export class GameEngine {
       return {
         wedding: typeof parsed.wedding === 'number' ? parsed.wedding : 0,
         school_trip: typeof parsed.school_trip === 'number' ? parsed.school_trip : 0,
+        sports_day: typeof parsed.sports_day === 'number' ? parsed.sports_day : 0,
+        tropical_beach: typeof parsed.tropical_beach === 'number' ? parsed.tropical_beach : 0,
       };
     } catch {
       return defaults;
@@ -214,10 +230,12 @@ export class GameEngine {
     }
 
     this.builtStage.syncIntruder(this.simulator.intruder, 0.016, this.elapsedTime);
+    this.builtStage.syncHazard(this.simulator.hazard, 0.016, this.elapsedTime);
     this.liveMetrics = this.evaluator.evaluateLive(
       this.simulator.npcs,
       this.camera,
       this.simulator.intruder,
+      this.simulator.hazard,
     );
   }
 
@@ -353,6 +371,7 @@ export class GameEngine {
 
     if (this.builtStage) {
       this.builtStage.syncIntruder(this.simulator.intruder, 0.001, this.elapsedTime);
+      this.builtStage.syncHazard(this.simulator.hazard, 0.001, this.elapsedTime);
     }
 
     // Evaluate exact 3D score against the 4:3 print frustum
@@ -362,6 +381,7 @@ export class GameEngine {
       photoCam,
       this.currentStage,
       this.simulator.intruder,
+      this.simulator.hazard,
     );
 
     // Hide all 2D reaction bubbles, render crisp frame, grab directly from WebGL canvas
@@ -527,15 +547,16 @@ export class GameEngine {
 
       if (this.builtStage) {
         this.builtStage.syncIntruder(this.simulator.intruder, dt, this.elapsedTime);
+        this.builtStage.syncHazard(this.simulator.hazard, dt, this.elapsedTime);
       }
 
       if (this.phase === 'playing') {
         for (const ev of events) {
           this.sound.playSimEvent(ev);
           if (this.builtStage) {
-            if (ev.type === 'sneeze_blast') {
+            if (ev.type === 'sneeze_blast' || ev.type === 'wave_crash' || ev.type === 'kusudama_pop') {
               this.builtStage.spawnDustPuff(ev.position, 16);
-            } else if (ev.type === 'pileup' || ev.type === 'intruder_bonk') {
+            } else if (ev.type === 'pileup' || ev.type === 'intruder_bonk' || ev.type === 'ball_boing') {
               this.builtStage.spawnDustPuff(ev.position, 12);
             } else if (ev.type === 'fall' || ev.type === 'slip') {
               this.builtStage.spawnDustPuff(ev.position, 9);
@@ -549,6 +570,7 @@ export class GameEngine {
           this.simulator.npcs,
           this.camera,
           this.simulator.intruder,
+          this.simulator.hazard,
         );
 
         const goodThreshold = Math.max(1, this.liveMetrics.totalCount - 1);

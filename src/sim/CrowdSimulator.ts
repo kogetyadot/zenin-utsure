@@ -3,6 +3,9 @@ import {
   NpcRuntimeState,
   NpcSpec,
   SimEvent,
+  StageHazardState,
+  StageId,
+  StageIntruderKind,
   StageIntruderState,
   StageSpec,
 } from '../types';
@@ -25,7 +28,52 @@ export const SIM_CONFIG = {
   intruderFirstWarningDelay: 4.5,
   intruderRepeatDelay: 11.5,
   intruderWarningDuration: 1.7,
+  // Stage 3 Sports Day: Oodama bowling ball & Kusudama confetti burst
+  oodamaSpanX: 5.6,
+  oodamaSpeed: 3.8,
+  oodamaY: 0.88,
+  oodamaZ: 0.35,
+  kusudamaDuration: 4.2,
+  // Stage 4 Tropical Beach: Bouncy beach ball & staggered crashing wave
+  beachBallSpanX: 5.4,
+  beachBallDuration: 3.2,
+  beachBallFirstWarningDelay: 10.8,
+  beachBallRepeatDelay: 6.6,
+  waveFirstWarningDelay: 5.2,
+  waveWarningDuration: 1.7,
+  waveDuration: 2.1,
+  waveRepeatCooldown: 7.7,
 } as const;
+
+function getIntruderKindForStage(stageId: StageId): StageIntruderKind {
+  switch (stageId) {
+    case 'wedding':
+      return 'dove';
+    case 'school_trip':
+      return 'deer';
+    case 'sports_day':
+      return 'oodama';
+    case 'tropical_beach':
+      return 'beach_ball';
+  }
+}
+
+function setIntruderRestPosition(intr: StageIntruderState, kind: StageIntruderKind): void {
+  switch (kind) {
+    case 'dove':
+      intr.position.set(6.5, 1.65, 2.6);
+      break;
+    case 'deer':
+      intr.position.set(6.5, 0, 0.2);
+      break;
+    case 'oodama':
+      intr.position.set(6.5, SIM_CONFIG.oodamaY, SIM_CONFIG.oodamaZ);
+      break;
+    case 'beach_ball':
+      intr.position.set(6.5, 0.72, 0.25);
+      break;
+  }
+}
 
 function hashString(str: string): number {
   let h = 2166136261 >>> 0;
@@ -115,25 +163,37 @@ export function updateNpcHeadGeometry(npc: NpcRuntimeState): void {
 export class CrowdSimulator {
   readonly npcs: NpcRuntimeState[] = [];
   readonly intruder: StageIntruderState;
+  readonly hazard: StageHazardState;
   private stage: StageSpec;
   private rng: () => number;
   private intruderCooldown: number = SIM_CONFIG.intruderFirstWarningDelay;
   private intruderStartSide: -1 | 1 = -1;
   private intruderTravelZ = 0.2;
+  private waveCooldown: number = SIM_CONFIG.waveFirstWarningDelay;
+  private pendingEvents: SimEvent[] = [];
 
   constructor(stage: StageSpec, seed?: number) {
     this.stage = stage;
     this.rng = createMulberry32(seed ?? hashString(stage.id));
+    const initialKind = getIntruderKindForStage(stage.id);
     this.intruder = {
-      kind: stage.id === 'wedding' ? 'dove' : 'deer',
+      kind: initialKind,
       active: false,
       warningTimer: 0,
       warningSide: 0,
-      position: new THREE.Vector3(6.5, stage.id === 'wedding' ? 1.65 : 0, stage.id === 'wedding' ? 2.6 : 0.2),
+      position: new THREE.Vector3(6.5, 0, 0.2),
       velocity: new THREE.Vector3(0, 0, 0),
       facingYaw: 0,
       phase: 0,
       activeTimer: 0,
+    };
+    setIntruderRestPosition(this.intruder, initialKind);
+    this.hazard = {
+      waveWarningTimer: 0,
+      waveProgress: 0,
+      waveActive: false,
+      kusudamaOpen: 0,
+      kusudamaTimer: 0,
     };
     this.reset(stage, seed);
   }
@@ -145,29 +205,37 @@ export class CrowdSimulator {
 
     resetNpcBehaviorState(this.npcs);
     this.npcs.length = 0;
+    this.pendingEvents.length = 0;
 
     for (const spec of stage.roster) {
       this.npcs.push(this.createInitialNpcState(spec, stage));
     }
 
     // Mutate readonly intruder in-place so external renderer/HUD references stay live
-    const intruderKind = stage.id === 'wedding' ? 'dove' : 'deer';
+    const intruderKind = getIntruderKindForStage(stage.id);
     this.intruder.kind = intruderKind;
     this.intruder.active = false;
     this.intruder.warningTimer = 0;
     this.intruder.warningSide = 0;
-    this.intruder.position.set(
-      6.5,
-      intruderKind === 'dove' ? 1.65 : 0,
-      intruderKind === 'dove' ? 2.6 : 0.2,
-    );
+    setIntruderRestPosition(this.intruder, intruderKind);
     this.intruder.velocity.set(0, 0, 0);
     this.intruder.facingYaw = 0;
     this.intruder.phase = 0;
     this.intruder.activeTimer = 0;
-    this.intruderCooldown = SIM_CONFIG.intruderFirstWarningDelay;
+    this.intruderCooldown =
+      stage.id === 'tropical_beach'
+        ? SIM_CONFIG.beachBallFirstWarningDelay
+        : SIM_CONFIG.intruderFirstWarningDelay;
     this.intruderStartSide = -1;
     this.intruderTravelZ = 0.2;
+
+    // Mutate readonly hazard in-place so external renderer/HUD/evaluator references stay live
+    this.hazard.waveWarningTimer = 0;
+    this.hazard.waveProgress = 0;
+    this.hazard.waveActive = false;
+    this.hazard.kusudamaOpen = 0;
+    this.hazard.kusudamaTimer = 0;
+    this.waveCooldown = SIM_CONFIG.waveFirstWarningDelay;
 
     // Ensure every NPC has exact headWorldPos & headForward ready on frame 1
     for (const npc of this.npcs) {
@@ -177,6 +245,18 @@ export class CrowdSimulator {
 
   triggerSayCheese(camera: THREE.PerspectiveCamera): void {
     camera.updateMatrixWorld();
+
+    // Stage 3 Sports Day: Burst open the overhead kusudama confetti ball!
+    const triggerKusudama = this.stage.id === 'sports_day';
+    if (triggerKusudama) {
+      this.hazard.kusudamaTimer = SIM_CONFIG.kusudamaDuration;
+      this.pendingEvents.push({
+        type: 'kusudama_pop',
+        npcId: 'kusudama',
+        position: new THREE.Vector3(0, 3.6, -0.85),
+        intensity: 1.6,
+      });
+    }
 
     for (const npc of this.npcs) {
       if (npc.action === 'fallen') {
@@ -237,13 +317,19 @@ export class CrowdSimulator {
           }
           break;
         case 'jumper':
-          // Prime jumpers so they telegraph & leap ~0.6s after the callout
-          npc.excitement = Math.max(npc.excitement, 0.72);
-          npc.cooldownTimer = Math.min(npc.cooldownTimer, 0.45);
+          if (triggerKusudama) {
+            // Immediate hyper excitement boost under the bursting kusudama confetti!
+            npc.excitement = 1.0;
+            npc.cooldownTimer = 0;
+          } else {
+            // Prime jumpers so they telegraph & leap ~0.6s after the callout
+            npc.excitement = Math.max(npc.excitement, 0.72);
+            npc.cooldownTimer = Math.min(npc.cooldownTimer, 0.45);
+          }
           npc.expression = 'cheese';
-          npc.poseIntensity = Math.max(npc.poseIntensity, 0.9);
+          npc.poseIntensity = Math.max(npc.poseIntensity, 0.95);
           npc.reactionIcon = '★';
-          npc.reactionTimer = 0.8;
+          npc.reactionTimer = 0.95;
           break;
         default:
           npc.expression = 'cheese';
@@ -266,19 +352,98 @@ export class CrowdSimulator {
     }
 
     const events: SimEvent[] = [];
+    if (this.pendingEvents.length > 0) {
+      for (const evt of this.pendingEvents) {
+        events.push(evt);
+      }
+      this.pendingEvents.length = 0;
+    }
+
     if (safeDt <= 0) {
       return events;
     }
 
+    this.updateHazard(safeDt, events);
     this.updateIntruder(safeDt, events);
-    updateNpcBehaviors(this.npcs, this.stage, camera, safeAngularSpeed, safeDt, this.rng, events);
-    stepPhysics(this.npcs, this.stage, safeDt, events, this.intruder);
+    updateNpcBehaviors(
+      this.npcs,
+      this.stage,
+      camera,
+      safeAngularSpeed,
+      safeDt,
+      this.rng,
+      events,
+      this.hazard,
+    );
+    stepPhysics(this.npcs, this.stage, safeDt, events, this.intruder, this.hazard);
 
     for (const npc of this.npcs) {
       updateNpcHeadGeometry(npc);
     }
 
     return events;
+  }
+
+  private updateHazard(dt: number, events: SimEvent[]): void {
+    const hz = this.hazard;
+
+    if (this.stage.id === 'sports_day') {
+      if (hz.kusudamaTimer > 0) {
+        hz.kusudamaTimer = Math.max(0, hz.kusudamaTimer - dt);
+        const openAlpha = 1 - Math.exp(-9.0 * dt);
+        hz.kusudamaOpen = clamp(hz.kusudamaOpen + (1 - hz.kusudamaOpen) * openAlpha, 0, 1);
+        if (hz.kusudamaOpen > 0.995) hz.kusudamaOpen = 1;
+      } else if (hz.kusudamaOpen > 0) {
+        const closeAlpha = 1 - Math.exp(-3.2 * dt);
+        hz.kusudamaOpen = clamp(hz.kusudamaOpen * (1 - closeAlpha), 0, 1);
+        if (hz.kusudamaOpen < 0.005) hz.kusudamaOpen = 0;
+      }
+      return;
+    }
+
+    if (this.stage.id === 'tropical_beach') {
+      // 1. Waiting for next periodic shoreline wave warning
+      if (!hz.waveActive && hz.waveWarningTimer <= 0) {
+        this.waveCooldown -= dt;
+        if (this.waveCooldown <= 0) {
+          hz.waveWarningTimer = SIM_CONFIG.waveWarningDuration;
+          hz.waveProgress = 0;
+          events.push({
+            type: 'wave_warning',
+            npcId: 'wave',
+            position: new THREE.Vector3(0, 0.2, 2.6),
+            intensity: 1.1,
+          });
+        }
+        return;
+      }
+
+      // 2. Warning countdown right before wave surges ashore
+      if (!hz.waveActive && hz.waveWarningTimer > 0) {
+        hz.waveWarningTimer = Math.max(0, hz.waveWarningTimer - dt);
+        if (hz.waveWarningTimer <= 0) {
+          hz.waveActive = true;
+          hz.waveProgress = 0;
+          events.push({
+            type: 'wave_crash',
+            npcId: 'wave',
+            position: new THREE.Vector3(0, 0.35, 2.2),
+            intensity: 1.65,
+          });
+        }
+        return;
+      }
+
+      // 3. Active crashing wave: surges ashore (0..0.72) then recedes (0.72..1.0) over 2.1s
+      if (hz.waveActive) {
+        hz.waveProgress += dt / SIM_CONFIG.waveDuration;
+        if (hz.waveProgress >= 1) {
+          hz.waveProgress = 0;
+          hz.waveActive = false;
+          this.waveCooldown = SIM_CONFIG.waveRepeatCooldown;
+        }
+      }
+    }
   }
 
   private updateIntruder(dt: number, events: SimEvent[]): void {
@@ -296,6 +461,10 @@ export class CrowdSimulator {
         intr.velocity.set(0, 0, 0);
         if (intr.kind === 'dove') {
           intr.position.set(side * 5.2, 1.65, 2.6);
+        } else if (intr.kind === 'oodama') {
+          intr.position.set(side * SIM_CONFIG.oodamaSpanX, SIM_CONFIG.oodamaY, SIM_CONFIG.oodamaZ);
+        } else if (intr.kind === 'beach_ball') {
+          intr.position.set(side * SIM_CONFIG.beachBallSpanX, 0.72, 0.25);
         } else {
           this.intruderTravelZ = 0.05 + this.rng() * 0.3;
           const startX = side * 4.8;
@@ -321,6 +490,22 @@ export class CrowdSimulator {
           intr.position.set(this.intruderStartSide * 5.2, 1.65, 2.6);
           intr.velocity.set(-this.intruderStartSide * 3.8, 0, 0);
           intr.facingYaw = Math.atan2(-this.intruderStartSide, 0.25);
+        } else if (intr.kind === 'oodama') {
+          intr.position.set(
+            this.intruderStartSide * SIM_CONFIG.oodamaSpanX,
+            SIM_CONFIG.oodamaY,
+            SIM_CONFIG.oodamaZ,
+          );
+          intr.velocity.set(-this.intruderStartSide * SIM_CONFIG.oodamaSpeed, 0, 0);
+          intr.facingYaw = Math.atan2(-this.intruderStartSide, 0);
+        } else if (intr.kind === 'beach_ball') {
+          intr.position.set(this.intruderStartSide * SIM_CONFIG.beachBallSpanX, 0.72, 0.25);
+          intr.velocity.set(
+            (-this.intruderStartSide * SIM_CONFIG.beachBallSpanX * 2) / SIM_CONFIG.beachBallDuration,
+            0,
+            0,
+          );
+          intr.facingYaw = Math.atan2(-this.intruderStartSide, 0);
         } else {
           const startX = this.intruderStartSide * 4.8;
           const startY = getGroundHeightAt(this.stage, startX, this.intruderTravelZ);
@@ -386,6 +571,42 @@ export class CrowdSimulator {
         intr.warningSide = 0;
         intr.velocity.set(0, 0, 0);
         this.intruderCooldown = SIM_CONFIG.intruderRepeatDelay;
+        return;
+      }
+    } else if (intr.kind === 'oodama') {
+      // Stage 3 Sports Day: Giant Red-White Oodama rolls fast across the front bowling lane!
+      intr.phase += dt * (SIM_CONFIG.oodamaSpeed / 0.92);
+      const totalDur = (SIM_CONFIG.oodamaSpanX * 2) / SIM_CONFIG.oodamaSpeed;
+
+      if (t < totalDur) {
+        const u = clamp(t / totalDur, 0, 1);
+        nextX = side * SIM_CONFIG.oodamaSpanX * (1 - 2 * u);
+        nextY = SIM_CONFIG.oodamaY;
+        nextZ = SIM_CONFIG.oodamaZ;
+        targetYaw = Math.atan2(-side, 0);
+      } else {
+        intr.active = false;
+        intr.warningSide = 0;
+        intr.velocity.set(0, 0, 0);
+        this.intruderCooldown = SIM_CONFIG.intruderRepeatDelay;
+        return;
+      }
+    } else if (intr.kind === 'beach_ball') {
+      // Stage 4 Tropical Beach: Giant Bouncy Beach Ball arcs wildly across the crowd!
+      intr.phase += dt * 2.15;
+      const totalDur = SIM_CONFIG.beachBallDuration;
+
+      if (t < totalDur) {
+        const u = clamp(t / totalDur, 0, 1);
+        nextX = side * SIM_CONFIG.beachBallSpanX * (1 - 2 * u);
+        nextZ = 0.25 + Math.sin(intr.phase) * 0.75;
+        nextY = 0.72 + Math.abs(Math.sin(intr.phase * 2.8)) * 1.9;
+        targetYaw = Math.atan2(-side, Math.cos(intr.phase) * 0.45);
+      } else {
+        intr.active = false;
+        intr.warningSide = 0;
+        intr.velocity.set(0, 0, 0);
+        this.intruderCooldown = SIM_CONFIG.beachBallRepeatDelay;
         return;
       }
     } else {

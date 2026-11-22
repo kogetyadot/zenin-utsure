@@ -11,7 +11,7 @@ interface BgmTrackDef {
   melody: number[];
   bass: number[];
   chords: number[][]; // 8 chords, 1 per 4 steps (half-bar)
-  style: 'wedding' | 'school_trip';
+  style: StageId;
 }
 
 function midiToHz(midi: number): number {
@@ -84,9 +84,78 @@ const SCHOOL_TRIP_BGM: BgmTrackDef = {
   ],
 };
 
+// Energetic C-major Japanese Sports Day Can-Can / Athletic March (138 BPM)
+const SPORTS_DAY_BGM: BgmTrackDef = {
+  baseBpm: 138,
+  swing: 0.0,
+  style: 'sports_day',
+  melody: [
+    // Bar 1 (C): iconic Can-Can athletic dash motif
+    72, 0, 74, 77, 76, 74, 79, 79,
+    // Bar 2 (G7): bouncy hurdle cadence
+    79, 81, 76, 77, 74, 74, 74, 77,
+    // Bar 3 (C -> F): triumphant high-C sprint
+    76, 74, 72, 84, 83, 81, 79, 77,
+    // Bar 4 (G7 -> C): joyful finish-line fanfare
+    76, 74, 72, 74, 76, 79, 84, 0,
+  ],
+  bass: [
+    48, 0, 55, 0, 48, 0, 55, 0,
+    55, 0, 50, 0, 55, 0, 59, 0,
+    48, 0, 55, 0, 53, 0, 57, 0,
+    55, 0, 50, 0, 55, 59, 48, 0,
+  ],
+  chords: [
+    [60, 64, 67], // C
+    [60, 64, 67], // C
+    [62, 65, 67, 71], // G7
+    [62, 65, 67, 71], // G7
+    [60, 64, 67], // C
+    [60, 65, 69], // F
+    [62, 65, 67, 71], // G7
+    [60, 64, 67], // C
+  ],
+};
+
+// Sunny D-major Tropical Steel-Drum & Ukulele Calypso (122 BPM)
+const TROPICAL_BEACH_BGM: BgmTrackDef = {
+  baseBpm: 122,
+  swing: 0.07,
+  style: 'tropical_beach',
+  melody: [
+    // Bar 1 (D): shimmering pentatonic steel-pan hook
+    81, 0, 83, 81, 0, 78, 74, 0,
+    // Bar 2 (G): sunny ocean lift
+    79, 0, 81, 83, 0, 86, 83, 81,
+    // Bar 3 (A7): breezy calypso sway
+    79, 0, 76, 79, 81, 0, 78, 76,
+    // Bar 4 (D -> A7): sparkling turnaround
+    74, 78, 81, 0, 86, 0, 83, 81,
+  ],
+  bass: [
+    // Classic 3-3-2 syncopated island calypso bass
+    50, 0, 0, 57, 0, 0, 54, 0,
+    55, 0, 0, 59, 0, 0, 55, 0,
+    57, 0, 0, 52, 0, 0, 57, 0,
+    50, 0, 0, 57, 50, 0, 57, 0,
+  ],
+  chords: [
+    [62, 66, 69, 74], // D
+    [62, 66, 69, 74], // D
+    [67, 71, 74, 79], // G
+    [67, 71, 74, 79], // G
+    [64, 67, 69, 73], // A7
+    [64, 67, 69, 73], // A7
+    [62, 66, 69, 74], // D
+    [64, 67, 69, 73], // A7
+  ],
+};
+
 const BGM_TRACKS: Record<StageId, BgmTrackDef> = {
   wedding: WEDDING_BGM,
   school_trip: SCHOOL_TRIP_BGM,
+  sports_day: SPORTS_DAY_BGM,
+  tropical_beach: TROPICAL_BEACH_BGM,
 };
 
 export class SoundEngine {
@@ -282,8 +351,73 @@ export class SoundEngine {
   ): void {
     if (!this.ctx || !this.bgmGain) return;
 
-    // 1. Melody (warm marimba / glockenspiel)
     const melMidi = track.melody[step];
+    const bassMidi = track.bass[step];
+    const chordIdx = Math.floor(step / 4) % track.chords.length;
+    const chord = track.chords[chordIdx];
+
+    if (track.style === 'sports_day') {
+      // 1. Bright bouncy brass + marimba athletic march lead
+      if (melMidi > 0) {
+        const hz = midiToHz(melMidi);
+        this.playMarimbaNote(hz, time, 0.16, 0.28, true, this.bgmGain);
+        this.playBrassLeadNote(hz, time, Math.min(0.18, eighthSec * 0.88), 0.14, this.bgmGain);
+      }
+
+      // 2. Punchy oom-pah marching bass
+      if (bassMidi > 0) {
+        this.playBassNote(midiToHz(bassMidi), time, eighthSec * 1.15, 0.44, this.bgmGain);
+      }
+
+      // 3. Crisp off-beat athletic horn/chord stabs
+      if (step % 2 === 1) {
+        this.playWarmChordPluck(chord, time, 0.1, 0.1, this.bgmGain);
+      }
+
+      // 4. Marching kick + snare + woodblock cadence
+      if (step % 4 === 0) {
+        this.playMarchKick(time, 0.24, this.bgmGain);
+      }
+      if (step % 4 === 2 || step === 15 || step === 30 || step === 31) {
+        this.playMarchSnare(time, step % 4 === 2 ? 0.15 : 0.1, this.bgmGain);
+      } else if (step % 4 === 1) {
+        this.playWoodblock(time, 1040, 0.065, this.bgmGain);
+      }
+      return;
+    }
+
+    if (track.style === 'tropical_beach') {
+      // 1. Shimmering pentatonic steel-drum melody
+      if (melMidi > 0) {
+        this.playSteelDrumNote(midiToHz(melMidi), time, 0.3, 0.32, this.bgmGain);
+      }
+
+      // 2. Warm syncopated island bass
+      if (bassMidi > 0) {
+        this.playBassNote(midiToHz(bassMidi), time, eighthSec * 1.85, 0.4, this.bgmGain);
+      }
+
+      // 3. Sunny syncopated ukulele calypso strum
+      const barStep = step % 8;
+      if (barStep === 0 || barStep === 2 || barStep === 5 || barStep === 7) {
+        this.playUkuleleStrum(
+          chord,
+          time,
+          barStep === 0 ? 0.19 : 0.14,
+          barStep === 0 ? 0.1 : 0.085,
+          this.bgmGain,
+        );
+      }
+
+      // 4. Breezy tropical shaker groove + clave woodblock
+      this.playShaker(time, barStep % 2 === 0 ? 0.055 : 0.032, barStep === 2 || barStep === 6, this.bgmGain);
+      if (barStep === 0 || barStep === 3 || barStep === 6) {
+        this.playWoodblock(time, 1240, 0.06, this.bgmGain);
+      }
+      return;
+    }
+
+    // 1. Melody (warm marimba / glockenspiel)
     if (melMidi > 0) {
       this.playMarimbaNote(
         midiToHz(melMidi),
@@ -296,15 +430,12 @@ export class SoundEngine {
     }
 
     // 2. Upright / bouncy bass
-    const bassMidi = track.bass[step];
     if (bassMidi > 0) {
       this.playBassNote(midiToHz(bassMidi), time, eighthSec * 1.6, 0.42, this.bgmGain);
     }
 
     // 3. Off-beat acoustic strum chord (ukulele / pizzicato feel)
     if (step % 2 === 1) {
-      const chordIdx = Math.floor(step / 4) % track.chords.length;
-      const chord = track.chords[chordIdx];
       this.playWarmChordPluck(chord, time, 0.14, 0.09, this.bgmGain);
     }
 
@@ -469,6 +600,204 @@ export class SoundEngine {
     gain.connect(dest);
     osc.start(time);
     osc.stop(time + 0.055);
+  }
+
+  private playBrassLeadNote(
+    freq: number,
+    time: number,
+    duration: number,
+    volume: number,
+    dest: AudioNode,
+  ): void {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const filter = this.ctx.createBiquadFilter();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(freq, time);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(920, time);
+    filter.frequency.exponentialRampToValueAtTime(2700, time + 0.025);
+    filter.frequency.exponentialRampToValueAtTime(1150, time + duration);
+
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(volume, time + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(dest);
+
+    osc.start(time);
+    osc.stop(time + duration + 0.03);
+  }
+
+  private playMarchSnare(time: number, volume: number, dest: AudioNode): void {
+    if (!this.ctx) return;
+    // Snappy snare wire burst
+    if (this.noiseBuffer) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noiseBuffer;
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(2400, time);
+      bp.Q.setValueAtTime(1.1, time);
+      const nGain = this.ctx.createGain();
+      nGain.gain.setValueAtTime(0.0001, time);
+      nGain.gain.linearRampToValueAtTime(volume, time + 0.003);
+      nGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.085);
+      src.connect(bp);
+      bp.connect(nGain);
+      nGain.connect(dest);
+      src.start(time, Math.random() * 0.5, 0.095);
+    }
+    // Tight drum shell body tone
+    const body = this.ctx.createOscillator();
+    const bGain = this.ctx.createGain();
+    body.type = 'triangle';
+    body.frequency.setValueAtTime(220, time);
+    body.frequency.exponentialRampToValueAtTime(130, time + 0.045);
+    bGain.gain.setValueAtTime(0.0001, time);
+    bGain.gain.linearRampToValueAtTime(volume * 0.65, time + 0.003);
+    bGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.055);
+    body.connect(bGain);
+    bGain.connect(dest);
+    body.start(time);
+    body.stop(time + 0.065);
+  }
+
+  private playMarchKick(time: number, volume: number, dest: AudioNode): void {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(125, time);
+    osc.frequency.exponentialRampToValueAtTime(52, time + 0.075);
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(volume, time + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.09);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(time);
+    osc.stop(time + 0.1);
+  }
+
+  private playSteelDrumNote(
+    freq: number,
+    time: number,
+    duration: number,
+    volume: number,
+    dest: AudioNode,
+  ): void {
+    if (!this.ctx) return;
+    // Fundamental + octave overtone + shimmering slightly detuned metallic 3rd harmonic
+    const fund = this.ctx.createOscillator();
+    const oct = this.ctx.createOscillator();
+    const shimmer = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    const octGain = this.ctx.createGain();
+    const shimGain = this.ctx.createGain();
+
+    fund.type = 'sine';
+    fund.frequency.setValueAtTime(freq * 1.006, time);
+    fund.frequency.exponentialRampToValueAtTime(freq, time + 0.018);
+
+    oct.type = 'triangle';
+    oct.frequency.setValueAtTime(freq * 2.0, time);
+
+    shimmer.type = 'sine';
+    shimmer.frequency.setValueAtTime(freq * 3.015, time);
+
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(volume, time + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+
+    octGain.gain.setValueAtTime(0.0001, time);
+    octGain.gain.linearRampToValueAtTime(volume * 0.34, time + 0.005);
+    octGain.gain.exponentialRampToValueAtTime(0.0001, time + duration * 0.55);
+
+    shimGain.gain.setValueAtTime(0.0001, time);
+    shimGain.gain.linearRampToValueAtTime(volume * 0.14, time + 0.004);
+    shimGain.gain.exponentialRampToValueAtTime(0.0001, time + duration * 0.32);
+
+    fund.connect(gain);
+    oct.connect(octGain);
+    shimmer.connect(shimGain);
+    octGain.connect(gain);
+    shimGain.connect(gain);
+    gain.connect(dest);
+
+    fund.start(time);
+    oct.start(time);
+    shimmer.start(time);
+    fund.stop(time + duration + 0.03);
+    oct.stop(time + duration + 0.03);
+    shimmer.stop(time + duration + 0.03);
+  }
+
+  private playUkuleleStrum(
+    midis: number[],
+    time: number,
+    duration: number,
+    volume: number,
+    dest: AudioNode,
+  ): void {
+    if (!this.ctx) return;
+    const hp = this.ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.setValueAtTime(340, time);
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(2600, time);
+
+    const chordGain = this.ctx.createGain();
+    chordGain.gain.setValueAtTime(0.0001, time);
+    chordGain.gain.linearRampToValueAtTime(volume, time + 0.008);
+    chordGain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+
+    hp.connect(lp);
+    lp.connect(chordGain);
+    chordGain.connect(dest);
+
+    for (let i = 0; i < midis.length; i++) {
+      const osc = this.ctx.createOscillator();
+      osc.type = 'triangle';
+      const strumOffset = i * 0.009;
+      osc.frequency.setValueAtTime(midiToHz(midis[i]), time + strumOffset);
+      osc.connect(hp);
+      osc.start(time + strumOffset);
+      osc.stop(time + duration + 0.04);
+    }
+  }
+
+  private playShaker(
+    time: number,
+    volume: number,
+    accented: boolean,
+    dest: AudioNode,
+  ): void {
+    if (!this.ctx || !this.noiseBuffer) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuffer;
+
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(accented ? 7600 : 6200, time);
+    bp.Q.setValueAtTime(2.0, time);
+
+    const dur = accented ? 0.055 : 0.034;
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(volume, time + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+
+    src.connect(bp);
+    bp.connect(gain);
+    gain.connect(dest);
+
+    src.start(time, Math.random() * 0.7, dur + 0.015);
   }
 
   // ==================== CAMERA & GAMEPLAY FOLEY ====================
@@ -711,6 +1040,10 @@ export class SoundEngine {
       intruder_bonk: 0.2,
       lens_bomb: 0.45,
       slip: 0.18,
+      wave_warning: 0.9,
+      wave_crash: 0.7,
+      kusudama_pop: 0.6,
+      ball_boing: 0.18,
     };
 
     const prev = this.lastSimEventAt[ev.type] ?? -10;
@@ -1096,13 +1429,84 @@ export class SoundEngine {
         }
 
         case 'intruder_enter': {
-          // Bubbly dove coo warble (クルッポー♪) or comical nasal deer bleat
+          // Stage-specific intruder entrance SFX (dove, deer, oodama whistle, beach_ball boing)
           const lowerId = ev.npcId.toLowerCase();
+          const isOodama =
+            lowerId.includes('oodama') ||
+            (!lowerId.includes('dove') &&
+              !lowerId.includes('deer') &&
+              !lowerId.includes('beach') &&
+              this.currentStage === 'sports_day');
+          const isBeachBall =
+            lowerId.includes('beach') ||
+            lowerId.includes('ball') ||
+            (!lowerId.includes('dove') &&
+              !lowerId.includes('deer') &&
+              !lowerId.includes('oodama') &&
+              this.currentStage === 'tropical_beach');
           const isDeer =
             lowerId.includes('deer') ||
-            (!lowerId.includes('dove') && this.currentStage === 'school_trip');
+            (!lowerId.includes('dove') &&
+              !isOodama &&
+              !isBeachBall &&
+              this.currentStage === 'school_trip');
 
-          if (isDeer) {
+          if (isOodama) {
+            // Energetic sports-day referee pea-whistle trill ("ピピーーーッ!!")
+            const whistle = ctx.createOscillator();
+            const pea = ctx.createOscillator();
+            const peaGain = ctx.createGain();
+            const wGain = ctx.createGain();
+
+            whistle.type = 'sine';
+            whistle.frequency.setValueAtTime(2850, now);
+            whistle.frequency.setValueAtTime(2950, now + 0.12);
+
+            pea.type = 'sine';
+            pea.frequency.setValueAtTime(34, now);
+            peaGain.gain.setValueAtTime(95, now);
+            pea.connect(peaGain);
+            peaGain.connect(whistle.frequency);
+
+            wGain.gain.setValueAtTime(0.0001, now);
+            wGain.gain.linearRampToValueAtTime(0.18 * intensity, now + 0.012);
+            wGain.gain.linearRampToValueAtTime(0.02 * intensity, now + 0.085);
+            wGain.gain.linearRampToValueAtTime(0.22 * intensity, now + 0.125);
+            wGain.gain.setValueAtTime(0.2 * intensity, now + 0.28);
+            wGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.36);
+
+            whistle.connect(wGain);
+            wGain.connect(this.sfxGain);
+            whistle.start(now);
+            pea.start(now);
+            whistle.stop(now + 0.38);
+            pea.stop(now + 0.38);
+          } else if (isBeachBall) {
+            // Playful bouncy beach-ball arrival boing!
+            const osc = ctx.createOscillator();
+            const lfo = ctx.createOscillator();
+            const lfoGain = ctx.createGain();
+            const g = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(165, now);
+            osc.frequency.exponentialRampToValueAtTime(490, now + 0.08);
+            osc.frequency.exponentialRampToValueAtTime(260, now + 0.28);
+            lfo.type = 'sine';
+            lfo.frequency.setValueAtTime(17, now);
+            lfoGain.gain.setValueAtTime(34, now);
+            lfoGain.gain.exponentialRampToValueAtTime(6, now + 0.28);
+            lfo.connect(lfoGain);
+            lfoGain.connect(osc.frequency);
+            g.gain.setValueAtTime(0.001, now);
+            g.gain.linearRampToValueAtTime(0.28 * intensity, now + 0.012);
+            g.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+            osc.connect(g);
+            g.connect(this.sfxGain);
+            osc.start(now);
+            lfo.start(now);
+            osc.stop(now + 0.32);
+            lfo.stop(now + 0.32);
+          } else if (isDeer) {
             // Comical nasal deer bleat with vibrato
             const carrier = ctx.createOscillator();
             const vibrato = ctx.createOscillator();
@@ -1263,6 +1667,237 @@ export class SoundEngine {
             cGain.connect(this.sfxGain);
             cym.start(now, 0.4, 0.26);
           }
+          break;
+        }
+
+        case 'wave_warning': {
+          // Rising filtered ocean-swell whoosh warning ("ザザザザーッ…")
+          if (this.noiseBuffer) {
+            const swell = ctx.createBufferSource();
+            swell.buffer = this.noiseBuffer;
+            const lp = ctx.createBiquadFilter();
+            lp.type = 'bandpass';
+            lp.frequency.setValueAtTime(220, now);
+            lp.frequency.exponentialRampToValueAtTime(1350, now + 0.82);
+            lp.Q.setValueAtTime(1.15, now);
+
+            const sGain = ctx.createGain();
+            sGain.gain.setValueAtTime(0.0001, now);
+            sGain.gain.linearRampToValueAtTime(0.32 * intensity, now + 0.56);
+            sGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.88);
+
+            swell.connect(lp);
+            lp.connect(sGain);
+            sGain.connect(this.sfxGain);
+            swell.start(now, 0.05, 0.92);
+          }
+
+          // Low rising ocean-tide rumble
+          const tide = ctx.createOscillator();
+          const tGain = ctx.createGain();
+          tide.type = 'sine';
+          tide.frequency.setValueAtTime(68, now);
+          tide.frequency.exponentialRampToValueAtTime(118, now + 0.78);
+          tGain.gain.setValueAtTime(0.0001, now);
+          tGain.gain.linearRampToValueAtTime(0.18 * intensity, now + 0.48);
+          tGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.85);
+          tide.connect(tGain);
+          tGain.connect(this.sfxGain);
+          tide.start(now);
+          tide.stop(now + 0.88);
+          break;
+        }
+
+        case 'wave_crash': {
+          // Huge frothy ocean splash: bandpass surf crash + white-water foam + bubbly spray!
+          if (this.noiseBuffer) {
+            // Main breaking wave crash
+            const crash = ctx.createBufferSource();
+            crash.buffer = this.noiseBuffer;
+            const bp = ctx.createBiquadFilter();
+            bp.type = 'bandpass';
+            bp.frequency.setValueAtTime(1550, now);
+            bp.frequency.exponentialRampToValueAtTime(320, now + 0.68);
+            bp.Q.setValueAtTime(0.85, now);
+
+            const cGain = ctx.createGain();
+            cGain.gain.setValueAtTime(0.001, now);
+            cGain.gain.linearRampToValueAtTime(0.58 * intensity, now + 0.028);
+            cGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.74);
+
+            crash.connect(bp);
+            bp.connect(cGain);
+            cGain.connect(this.sfxGain);
+            crash.start(now, 0.1, 0.78);
+
+            // Frothy high-frequency white-water spray
+            const foam = ctx.createBufferSource();
+            foam.buffer = this.noiseBuffer;
+            const hp = ctx.createBiquadFilter();
+            hp.type = 'highpass';
+            hp.frequency.setValueAtTime(3200, now + 0.02);
+
+            const fGain = ctx.createGain();
+            fGain.gain.setValueAtTime(0.0001, now + 0.02);
+            fGain.gain.linearRampToValueAtTime(0.24 * intensity, now + 0.075);
+            fGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.64);
+
+            foam.connect(hp);
+            hp.connect(fGain);
+            fGain.connect(this.sfxGain);
+            foam.start(now + 0.02, 0.35, 0.66);
+          }
+
+          // Water-wall impact boom
+          const boom = ctx.createOscillator();
+          const bGain = ctx.createGain();
+          boom.type = 'sine';
+          boom.frequency.setValueAtTime(118, now);
+          boom.frequency.exponentialRampToValueAtTime(42, now + 0.25);
+          bGain.gain.setValueAtTime(0.001, now);
+          bGain.gain.linearRampToValueAtTime(0.36 * intensity, now + 0.015);
+          bGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+          boom.connect(bGain);
+          bGain.connect(this.sfxGain);
+          boom.start(now);
+          boom.stop(now + 0.3);
+
+          // Bubbly spray droplet pops
+          const bubbles = [
+            { t: 0.06, f1: 420, f2: 920 },
+            { t: 0.12, f1: 580, f2: 1240 },
+            { t: 0.19, f1: 480, f2: 1060 },
+            { t: 0.27, f1: 660, f2: 1380 },
+            { t: 0.36, f1: 520, f2: 1120 },
+          ];
+          for (const b of bubbles) {
+            const bt = now + b.t;
+            const osc = ctx.createOscillator();
+            const g = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(b.f1, bt);
+            osc.frequency.exponentialRampToValueAtTime(b.f2, bt + 0.055);
+            g.gain.setValueAtTime(0.0001, bt);
+            g.gain.linearRampToValueAtTime(0.11 * intensity, bt + 0.01);
+            g.gain.exponentialRampToValueAtTime(0.0001, bt + 0.065);
+            osc.connect(g);
+            g.connect(this.sfxGain);
+            osc.start(bt);
+            osc.stop(bt + 0.075);
+          }
+          break;
+        }
+
+        case 'kusudama_pop': {
+          // Crisp party-popper crack + celebratory rising glockenspiel confetti sparkle!
+          if (this.noiseBuffer) {
+            const crack = ctx.createBufferSource();
+            crack.buffer = this.noiseBuffer;
+            const bp = ctx.createBiquadFilter();
+            bp.type = 'bandpass';
+            bp.frequency.setValueAtTime(2600, now);
+            bp.Q.setValueAtTime(1.2, now);
+            const cGain = ctx.createGain();
+            cGain.gain.setValueAtTime(0.001, now);
+            cGain.gain.linearRampToValueAtTime(0.56 * intensity, now + 0.004);
+            cGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.065);
+            crack.connect(bp);
+            bp.connect(cGain);
+            cGain.connect(this.sfxGain);
+            crack.start(now, 0.08, 0.075);
+          }
+
+          // Punchy cork-pop snap
+          const pop = ctx.createOscillator();
+          const pGain = ctx.createGain();
+          pop.type = 'sine';
+          pop.frequency.setValueAtTime(360, now);
+          pop.frequency.exponentialRampToValueAtTime(92, now + 0.042);
+          pGain.gain.setValueAtTime(0.001, now);
+          pGain.gain.linearRampToValueAtTime(0.38 * intensity, now + 0.004);
+          pGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.052);
+          pop.connect(pGain);
+          pGain.connect(this.sfxGain);
+          pop.start(now);
+          pop.stop(now + 0.06);
+
+          // Celebratory rising glockenspiel confetti sparkle cascade
+          const sparkles = [76, 79, 84, 88, 91, 96, 100];
+          sparkles.forEach((midi, idx) => {
+            this.playMarimbaNote(
+              midiToHz(midi),
+              now + 0.045 + idx * 0.04,
+              idx === sparkles.length - 1 ? 0.45 : 0.2,
+              (idx === sparkles.length - 1 ? 0.3 : 0.22) * intensity,
+              true,
+              this.sfxGain!,
+            );
+          });
+          this.playWarmChordPluck([72, 76, 79, 86], now + 0.16, 0.42, 0.14 * intensity, this.sfxGain);
+          break;
+        }
+
+        case 'ball_boing': {
+          // Giant comical rubbery spring BOING!! (140Hz -> 520Hz -> 240Hz pitch-modulated bounce)
+          const main = ctx.createOscillator();
+          const harmonic = ctx.createOscillator();
+          const lfo = ctx.createOscillator();
+          const lfoGain = ctx.createGain();
+          const mainGain = ctx.createGain();
+          const harmGain = ctx.createGain();
+
+          main.type = 'sine';
+          main.frequency.setValueAtTime(140, now);
+          main.frequency.exponentialRampToValueAtTime(520, now + 0.075);
+          main.frequency.exponentialRampToValueAtTime(240, now + 0.34);
+
+          harmonic.type = 'triangle';
+          harmonic.frequency.setValueAtTime(280, now);
+          harmonic.frequency.exponentialRampToValueAtTime(1040, now + 0.075);
+          harmonic.frequency.exponentialRampToValueAtTime(480, now + 0.34);
+
+          lfo.type = 'sine';
+          lfo.frequency.setValueAtTime(19, now);
+          lfoGain.gain.setValueAtTime(52, now);
+          lfoGain.gain.exponentialRampToValueAtTime(8, now + 0.34);
+          lfo.connect(lfoGain);
+          lfoGain.connect(main.frequency);
+          lfoGain.connect(harmonic.frequency);
+
+          mainGain.gain.setValueAtTime(0.001, now);
+          mainGain.gain.linearRampToValueAtTime(0.36 * intensity, now + 0.01);
+          mainGain.gain.setValueAtTime(0.3 * intensity, now + 0.14);
+          mainGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
+
+          harmGain.gain.setValueAtTime(0.001, now);
+          harmGain.gain.linearRampToValueAtTime(0.12 * intensity, now + 0.012);
+          harmGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+
+          main.connect(mainGain);
+          harmonic.connect(harmGain);
+          harmGain.connect(mainGain);
+          mainGain.connect(this.sfxGain);
+
+          main.start(now);
+          harmonic.start(now);
+          lfo.start(now);
+          main.stop(now + 0.4);
+          harmonic.stop(now + 0.4);
+          lfo.stop(now + 0.4);
+
+          // Rubber ball impact slap thump
+          const slap = ctx.createOscillator();
+          const slapGain = ctx.createGain();
+          slap.type = 'triangle';
+          slap.frequency.setValueAtTime(210, now);
+          slap.frequency.exponentialRampToValueAtTime(72, now + 0.055);
+          slapGain.gain.setValueAtTime(0.001, now);
+          slapGain.gain.linearRampToValueAtTime(0.28 * intensity, now + 0.004);
+          slapGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.065);
+          slap.connect(slapGain);
+          slapGain.connect(this.sfxGain);
+          slap.start(now);
+          slap.stop(now + 0.075);
           break;
         }
       }

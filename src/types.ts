@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 
-export type StageId = 'wedding' | 'school_trip';
+export type StageId = 'wedding' | 'school_trip' | 'sports_day' | 'tropical_beach';
 
 export type ArchetypeId =
-  | 'vip'        // 主役 (Bride/Groom or Teacher) — central anchor, gets flustered if shoved
+  | 'vip'        // 主役 (Bride/Groom, Teacher, Captain/CEO, Aloha Boss)
   | 'showoff'    // 目立ちたがり — rushes forward & sprints right into the lens!
   | 'shy'        // 恥ずかしがり — hides behind tall neighbor when directly targeted, peeks when camera shifts slightly away
   | 'peeker'     // ひょっこり — short, jumps/tiptoes/requests wobbly shoulder-ride when occluded
@@ -12,17 +12,17 @@ export type ArchetypeId =
   | 'blinker';   // うっかり — gets distracted, blinks, OR builds up a mega-sneeze shockwave!
 
 export type ExpressionId =
-  | 'smile'      // Big happy smile (best score!)
-  | 'cheese'     // Extra excited open-mouth smile (after "Say Cheese!" or posing)
-  | 'neutral'    // Calm attentive look
-  | 'nervous'    // Shy / worried sweat look
-  | 'surprised'  // Wide-eyed shock (when pushed or falling)
-  | 'blink_warn' // Half-closed sleepy eyelids (telegraph right before blink!)
-  | 'blink'      // Fully closed eyes (penalized in photo!)
-  | 'dizzy'      // Swirly eyes (fallen / knocked down)
-  | 'smug'       // Cheeky show-off grin
-  | 'sneeze'     // Hilarious scrunched-up "ACHOO!!" face (>< eyes + wide mouth + comic puff)
-  | 'hen_gao';   // Absurd cross-eyed tongue-out goofy face (アッカンベー変顔!)
+  | 'smile'
+  | 'cheese'
+  | 'neutral'
+  | 'nervous'
+  | 'surprised'
+  | 'blink_warn'
+  | 'blink'
+  | 'dizzy'
+  | 'smug'
+  | 'sneeze'
+  | 'hen_gao';
 
 export type ActionState =
   | 'idle'
@@ -63,10 +63,39 @@ export interface CharacterAppearance {
   outfitTopColor: string;
   outfitBottomColor: string;
   accentColor: string;
-  outfitStyle: 'wedding_dress' | 'tuxedo' | 'party_dress' | 'suit' | 'school_blazer' | 'sailor' | 'teacher_track';
-  accessory: 'none' | 'veil' | 'top_hat' | 'sunglasses' | 'beret' | 'headband' | 'glasses' | 'bow_tie' | 'flower_crown' | 'cap' | 'flag' | 'bouquet';
-  heightScale: number; // 0.80 (short peeker) .. 1.15 (tall)
-  widthScale: number;  // 0.88 .. 1.12
+  outfitStyle:
+    | 'wedding_dress'
+    | 'tuxedo'
+    | 'party_dress'
+    | 'suit'
+    | 'school_blazer'
+    | 'sailor'
+    | 'teacher_track'
+    | 'track_jersey'
+    | 'mascot_suit'
+    | 'aloha_shirt'
+    | 'swimwear';
+  accessory:
+    | 'none'
+    | 'veil'
+    | 'top_hat'
+    | 'sunglasses'
+    | 'beret'
+    | 'headband'
+    | 'glasses'
+    | 'bow_tie'
+    | 'flower_crown'
+    | 'cap'
+    | 'flag'
+    | 'bouquet'
+    | 'trophy'
+    | 'straw_hat'
+    | 'snorkel'
+    | 'swim_ring'
+    | 'mascot_ears'
+    | 'pom_pom';
+  heightScale: number;
+  widthScale: number;
   rosyCheeks?: boolean;
 }
 
@@ -120,16 +149,28 @@ export interface StageSpec {
   roster: NpcSpec[];
 }
 
+export type StageIntruderKind = 'dove' | 'deer' | 'oodama' | 'beach_ball';
+
 export interface StageIntruderState {
-  kind: 'dove' | 'deer';
+  kind: StageIntruderKind;
   active: boolean;
-  warningTimer: number; // >0 before entering so player sees comedic warning!
+  warningTimer: number;
   warningSide: -1 | 0 | 1;
   position: THREE.Vector3;
   velocity: THREE.Vector3;
   facingYaw: number;
   phase: number;
   activeTimer: number;
+}
+
+export interface StageHazardState {
+  // Stage 4: Tropical Beach periodic crashing shoreline wave
+  waveWarningTimer: number; // >0 before wave hits
+  waveProgress: number;     // 0 = calm, 0..1 = crashing ashore & receding
+  waveActive: boolean;
+  // Stage 3: Sports Day overhead kusudama confetti ball
+  kusudamaOpen: number;     // 0 = closed, 0..1 = cracked open!
+  kusudamaTimer: number;    // >0 while celebrating confetti burst
 }
 
 export interface NpcRuntimeState {
@@ -166,12 +207,11 @@ export interface NpcRuntimeState {
   carrierId: string | null;
   helpTargetId: string | null;
   cooldownTimer: number;
-  // Bakage comedy runtime fields!
-  hatPopHeight: number;      // >0 when hat/accessory flies sky-high on impact!
-  hatPopVel: number;         // Vertical velocity of flying hat
-  hatSpin: number;           // Spin angle of flying hat
-  sneezeCharge: number;      // 0..1 pre-sneeze inhale shake before mega sneeze!
-  lensBombProgress: number;  // 0..1 showoff sprinting right up to the camera lens!
+  hatPopHeight: number;
+  hatPopVel: number;
+  hatSpin: number;
+  sneezeCharge: number;
+  lensBombProgress: number;
   events: SimEvent[];
 }
 
@@ -190,7 +230,11 @@ export type SimEventType =
   | 'intruder_enter'
   | 'intruder_bonk'
   | 'lens_bomb'
-  | 'slip';
+  | 'slip'
+  | 'wave_warning'
+  | 'wave_crash'
+  | 'kusudama_pop'
+  | 'ball_boing';
 
 export interface SimEvent {
   type: SimEventType;
@@ -220,7 +264,7 @@ export interface LiveCameraMetrics {
   vipTotalCount: number;
   faceBoxes: LiveFaceBox[];
   estimatedQuality: number;
-  intruderAlert?: string; // Short comic live alert banner when dove/deer or sneeze is imminent!
+  intruderAlert?: string;
 }
 
 export interface NpcPhotoVerdict {
@@ -251,13 +295,13 @@ export interface ComedyAward {
 }
 
 export interface PhotoScoreBreakdown {
-  totalScore: number;       // 0..100 (写真スコア)
-  comedyScore: number;      // 0..100 (🤣 爆笑度 / Bakage Meter!)
+  totalScore: number;
+  comedyScore: number;
   rank: PhotoRank;
-  coverageScore: number;    // 0..40 (全員写り)
-  expressionScore: number;  // 0..30 (表情・目線)
-  compositionScore: number; // 0..20 (構図バランス)
-  momentScore: number;      // 0..10 (シャッターチャンス)
+  coverageScore: number;
+  expressionScore: number;
+  compositionScore: number;
+  momentScore: number;
   visibleCount: number;
   smilingCount: number;
   totalCount: number;
@@ -268,7 +312,9 @@ export interface PhotoScoreBreakdown {
   shoulderRideCount: number;
   flyingHatCount: number;
   intruderInFrame: boolean;
-  intruderKind: 'dove' | 'deer' | null;
+  intruderKind: StageIntruderKind | null;
+  waveCrashActive: boolean;
+  kusudamaActive: boolean;
   henGaoCount: number;
   sneezeCount: number;
   lensBombCount: number;

@@ -1,5 +1,12 @@
 import * as THREE from 'three';
-import { NpcRuntimeState, SimEvent, SimEventType, StageSpec } from '../types';
+import {
+  NpcRuntimeState,
+  PlatformTier,
+  SimEvent,
+  SimEventType,
+  StageHazardState,
+  StageSpec,
+} from '../types';
 import { applyExternalBalanceHit, triggerHatPop } from './PhysicsWorld';
 
 export const BEHAVIOR_CONFIG = {
@@ -176,6 +183,23 @@ function steerToward(
   npc.velocity.x += (vx - npc.velocity.x) * blend;
   npc.velocity.z += (vz - npc.velocity.z) * blend;
   return dist;
+}
+
+function findHomePlatform(stage: StageSpec, npc: NpcRuntimeState): PlatformTier | null {
+  let best: PlatformTier | null = null;
+  for (const p of stage.platforms) {
+    if (
+      npc.spec.homePos.x >= p.minX &&
+      npc.spec.homePos.x <= p.maxX &&
+      npc.spec.homePos.z >= p.minZ &&
+      npc.spec.homePos.z <= p.maxZ
+    ) {
+      if (!best || p.height > best.height) {
+        best = p;
+      }
+    }
+  }
+  return best;
 }
 
 function computeCameraVisualFrontPoint(stage: StageSpec): THREE.Vector3 {
@@ -414,6 +438,10 @@ function updateBodyLean(npc: NpcRuntimeState, dt: number): void {
       targetTiltZ = npc.screenNdc.x >= 0 ? -0.14 : 0.14;
     } else if (npc.action === 'jump_charge') {
       targetTiltX = 0.18;
+    } else if (npc.action === 'jumping' && (npc.expression === 'surprised' || npc.balance < 0.7)) {
+      // Wild mid-air beach-ball boing tumble!
+      targetTiltX = Math.sin(npc.walkPhase * 4.5 + npc.position.x) * 0.48;
+      targetTiltZ = Math.cos(npc.walkPhase * 5.0 + npc.position.z) * 0.54;
     } else if (npc.action === 'carrying_rider') {
       targetTiltZ = Math.sin(npc.walkPhase * 1.1) * 0.07;
     } else if (npc.action === 'getting_up') {
@@ -444,6 +472,7 @@ export function updateNpcBehaviors(
   dt: number,
   rng: () => number,
   events: SimEvent[],
+  hazard?: StageHazardState,
 ): void {
   if (!Number.isFinite(dt) || dt <= 0) return;
   const safeDt = Math.min(dt, BEHAVIOR_CONFIG.maxDt);
@@ -674,15 +703,28 @@ export function updateNpcBehaviors(
 
     if (npc.action === 'jumping') {
       npc.actionTimer = Math.max(0, npc.actionTimer - safeDt);
-      const jumpHenGao = (henGaoTimerMap.get(npc) ?? 0) > 0;
-      npc.expression = jumpHenGao ? 'hen_gao' : 'cheese';
-      npc.reactionIcon = jumpHenGao ? '🤪' : '✌';
-      npc.reactionTimer = Math.max(npc.reactionTimer, 0.25);
-      npc.poseIntensity = 1.0;
+      const isBoingTumble = npc.expression === 'surprised' || npc.balance < 0.7;
+      if (isBoingTumble) {
+        npc.expression = 'surprised';
+        npc.reactionIcon = '!';
+        npc.reactionTimer = Math.max(npc.reactionTimer, 0.25);
+        npc.poseIntensity = 0.2;
+      } else {
+        const jumpHenGao = (henGaoTimerMap.get(npc) ?? 0) > 0;
+        npc.expression = jumpHenGao ? 'hen_gao' : 'cheese';
+        npc.reactionIcon = jumpHenGao ? '🤪' : '✌';
+        npc.reactionTimer = Math.max(npc.reactionTimer, 0.25);
+        npc.poseIntensity = 1.0;
+      }
       // Fallback if grounded without impact trigger
       if (npc.position.y <= npc.groundY + 0.03 && npc.velocity.y <= 0 && npc.actionTimer <= 0) {
-        npc.action = 'posing';
-        npc.actionTimer = 0.55;
+        if (isBoingTumble) {
+          npc.action = 'staggering';
+          npc.actionTimer = 0.55;
+        } else {
+          npc.action = 'posing';
+          npc.actionTimer = 0.55;
+        }
       }
       updateHeadAndBodyOrientation(npc, safeDt, _camPos.x, _camPos.y, _camPos.z);
       updateBodyLean(npc, safeDt);
@@ -841,9 +883,10 @@ export function updateNpcBehaviors(
           npc.spec.homePos.x - npc.position.x,
           npc.spec.homePos.z - npc.position.z,
         );
-        if (distHome > 0.22) {
+        const vipHoldRadius = stage.id === 'sports_day' ? 0.16 : 0.22;
+        if (distHome > vipHoldRadius) {
           npc.action = 'moving';
-          steerToward(npc, npc.spec.homePos.x, npc.spec.homePos.z, 1.48, safeDt, 0.14);
+          steerToward(npc, npc.spec.homePos.x, npc.spec.homePos.z, 1.48, safeDt, 0.12);
           if (distHome > 0.72) {
             npc.expression = 'surprised';
             npc.reactionIcon = '💦';
@@ -1536,6 +1579,65 @@ export function updateNpcBehaviors(
           }
         }
         break;
+      }
+    }
+
+    // === STAGE 3 (SPORTS DAY): GENTLE PODIUM LEDGE AWARENESS ===
+    // Keep VIPs & podium standers gently centered on their narrow home podium unless
+    // shoved, bumped, or actively chasing a rescue/shove so tumbles feel organic & earned!
+    if (
+      stage.id === 'sports_day' &&
+      npc.action !== 'shoving' &&
+      npc.action !== 'helping' &&
+      npc.action !== 'hiding'
+    ) {
+      const homePodium = findHomePlatform(stage, npc);
+      if (homePodium && Math.abs(npc.groundY - homePodium.height) < 0.06) {
+        const edgeMargin = 0.2;
+        const safeMinX = homePodium.minX + edgeMargin;
+        const safeMaxX = homePodium.maxX - edgeMargin;
+        const safeMinZ = homePodium.minZ + edgeMargin;
+        const safeMaxZ = homePodium.maxZ - edgeMargin;
+        const nearEdge =
+          npc.position.x < safeMinX ||
+          npc.position.x > safeMaxX ||
+          npc.position.z < safeMinZ ||
+          npc.position.z > safeMaxZ;
+        if (nearEdge && safeMinX < safeMaxX && safeMinZ < safeMaxZ) {
+          const clampedX = clamp(npc.position.x, safeMinX, safeMaxX);
+          const clampedZ = clamp(npc.position.z, safeMinZ, safeMaxZ);
+          const pullX = clampedX * 0.65 + npc.spec.homePos.x * 0.35;
+          const pullZ = clampedZ * 0.65 + npc.spec.homePos.z * 0.35;
+          const gentleSpeed = npc.spec.isVip ? 1.15 : 0.85;
+          steerToward(npc, pullX, pullZ, gentleSpeed, safeDt, 0.05);
+        }
+      }
+    }
+
+    // === STAGE 4 (TROPICAL BEACH): WAVE WARNING & SPLASH REACTIONS ===
+    if (
+      stage.id === 'tropical_beach' &&
+      hazard &&
+      (hazard.waveWarningTimer > 0 || hazard.waveActive)
+    ) {
+      if (npc.groundY >= 0.2) {
+        // Back-row dry sand dune NPCs stay dry and excitedly cheer / point at the splash!
+        if (npc.action !== 'hiding' && npc.action !== 'helping') {
+          npc.expression = 'cheese';
+          npc.poseIntensity = Math.max(npc.poseIntensity, 0.92);
+          if (npc.reactionTimer <= 0.15 || npc.reactionIcon === '') {
+            npc.reactionIcon = hazard.waveActive ? '✨' : '✌';
+            npc.reactionTimer = Math.max(npc.reactionTimer, 0.35);
+          }
+          headPitchBias -= 0.08;
+        }
+      } else if (hazard.waveWarningTimer > 0 || (hazard.waveActive && hazard.waveProgress < 0.72)) {
+        // Front-row wet shoreline NPCs glance down nervously right before getting splashed!
+        npc.expression = 'surprised';
+        npc.reactionIcon = '💦';
+        npc.reactionTimer = Math.max(npc.reactionTimer, 0.35);
+        npc.poseIntensity = Math.min(npc.poseIntensity, 0.25);
+        headPitchBias = -0.28;
       }
     }
 

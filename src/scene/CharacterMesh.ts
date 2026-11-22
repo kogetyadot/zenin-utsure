@@ -373,6 +373,7 @@ export class CharacterMesh {
 
   private readonly ownedGeometries: THREE.BufferGeometry[] = [];
   private readonly ownedMaterials: THREE.Material[] = [];
+  private readonly ownedTextures: THREE.Texture[] = [];
 
   // Core hierarchy pivots
   private readonly facingGroup: THREE.Group;
@@ -402,6 +403,8 @@ export class CharacterMesh {
   private ponytailPivot: THREE.Group | null = null;
   private veilPivot: THREE.Group | null = null;
   private flagBannerPivot: THREE.Group | null = null;
+  private leftPomPom: THREE.Group | null = null;
+  private rightPomPom: THREE.Group | null = null;
 
   // Proportions & animation state
   private readonly heightScale: number;
@@ -410,6 +413,8 @@ export class CharacterMesh {
   private readonly headRadius: number;
   private readonly phaseOffset: number;
   private readonly holdsRightProp: boolean;
+  private readonly holdsPomPoms: boolean;
+  private readonly wearsSwimRing: boolean;
   private readonly poseVariant: number;
 
   private currentExpression: ExpressionId = 'neutral';
@@ -446,7 +451,12 @@ export class CharacterMesh {
     this.headRadius = 0.255 * this.headScale;
     this.phaseOffset = hashString(spec.id) * Math.PI * 2;
     this.poseVariant = Math.floor(hashString(spec.id + '_pose') * 3);
-    this.holdsRightProp = app.accessory === 'flag' || app.accessory === 'bouquet';
+    this.holdsRightProp =
+      app.accessory === 'flag' ||
+      app.accessory === 'bouquet' ||
+      app.accessory === 'trophy';
+    this.holdsPomPoms = app.accessory === 'pom_pom';
+    this.wearsSwimRing = app.accessory === 'swim_ring';
 
     this.root = new THREE.Group();
     this.root.name = `npc_${spec.id}`;
@@ -486,21 +496,33 @@ export class CharacterMesh {
         ? '#fff6f0'
         : app.outfitStyle === 'party_dress'
           ? app.accentColor
-          : '#2a2422';
+          : app.outfitStyle === 'track_jersey'
+            ? '#f8fafc'
+            : app.outfitStyle === 'mascot_suit'
+              ? app.outfitBottomColor
+              : app.outfitStyle === 'aloha_shirt'
+                ? '#d9a16c'
+                : app.outfitStyle === 'swimwear'
+                  ? app.accentColor
+                  : '#2a2422';
     const shoeMat = this.makeToyMat(shoeColor, 0.5);
 
     const h = this.heightScale;
     const w = this.widthScale;
 
     // 4. Legs + cute rounded shoes
+    const isBeachStyle =
+      app.outfitStyle === 'aloha_shirt' || app.outfitStyle === 'swimwear';
     const usesBareLeg =
       app.outfitStyle === 'party_dress' ||
       app.outfitStyle === 'sailor' ||
-      app.outfitStyle === 'wedding_dress';
+      app.outfitStyle === 'wedding_dress' ||
+      isBeachStyle;
+    const addSocks = usesBareLeg && !isBeachStyle;
     const legMat = usesBareLeg ? skinMat : bottomMat;
 
-    this.leftLegPivot = this.buildLeg(-1, h, w, legMat, whiteMat, shoeMat, usesBareLeg);
-    this.rightLegPivot = this.buildLeg(1, h, w, legMat, whiteMat, shoeMat, usesBareLeg);
+    this.leftLegPivot = this.buildLeg(-1, h, w, legMat, whiteMat, shoeMat, addSocks);
+    this.rightLegPivot = this.buildLeg(1, h, w, legMat, whiteMat, shoeMat, addSocks);
     this.bodyPivot.add(this.leftLegPivot, this.rightLegPivot);
 
     // 5. Torso & styled outfit
@@ -510,8 +532,10 @@ export class CharacterMesh {
     this.buildOutfit(h, w, topMat, bottomMat, accentMat, whiteMat, skinMat);
 
     // 6. Articulated Arms + Hands + Peace Signs + Held Props
-    const leftArm = this.buildArm(-1, h, w, topMat, skinMat, whiteMat);
-    const rightArm = this.buildArm(1, h, w, topMat, skinMat, whiteMat);
+    const armCuffMat = app.outfitStyle === 'track_jersey' ? accentMat : whiteMat;
+    const armHandMat = app.outfitStyle === 'mascot_suit' ? accentMat : skinMat;
+    const leftArm = this.buildArm(-1, h, w, topMat, armHandMat, armCuffMat, isBeachStyle);
+    const rightArm = this.buildArm(1, h, w, topMat, armHandMat, armCuffMat, isBeachStyle);
     this.leftArmPivot = leftArm.pivot;
     this.rightArmPivot = rightArm.pivot;
     this.leftPeaceSign = leftArm.peaceSign;
@@ -522,6 +546,11 @@ export class CharacterMesh {
       this.buildFlagProp(this.rightArmPivot, h, accentMat);
     } else if (app.accessory === 'bouquet') {
       this.buildBouquetProp(this.rightArmPivot, h, whiteMat, accentMat);
+    } else if (app.accessory === 'trophy') {
+      this.buildTrophyProp(this.rightArmPivot, h);
+    } else if (app.accessory === 'pom_pom') {
+      this.leftPomPom = this.buildPomPomProp(this.leftArmPivot, h, topMat, accentMat, whiteMat);
+      this.rightPomPom = this.buildPomPomProp(this.rightArmPivot, h, topMat, accentMat, whiteMat);
     }
 
     // 7. Articulated Head Pivot
@@ -618,6 +647,11 @@ export class CharacterMesh {
     return mat;
   }
 
+  private trackTex<T extends THREE.Texture>(tex: T): T {
+    this.ownedTextures.push(tex);
+    return tex;
+  }
+
   private makeToyMat(color: string, roughness = 0.65, metalness = 0.04): THREE.MeshStandardMaterial {
     return this.trackMat(
       new THREE.MeshStandardMaterial({
@@ -679,6 +713,7 @@ export class CharacterMesh {
     sleeveMat: THREE.Material,
     skinMat: THREE.Material,
     cuffMat: THREE.Material,
+    shortSleeve = false,
   ): { pivot: THREE.Group; peaceSign: THREE.Group } {
     const pivot = new THREE.Group();
     pivot.position.set(side * 0.245 * w, 0.84 * h, 0);
@@ -691,20 +726,39 @@ export class CharacterMesh {
 
     // Sleeve / arm tube
     const armLen = 0.30 * h;
-    const armGeo = this.trackGeo(
-      new THREE.CapsuleGeometry(0.052 * w, Math.max(0.08, armLen - 0.1), 6, 10),
-    );
-    const armMesh = new THREE.Mesh(armGeo, sleeveMat);
-    armMesh.position.y = -armLen * 0.5;
-    armMesh.castShadow = true;
-    pivot.add(armMesh);
+    if (shortSleeve) {
+      // Crisp summer short-sleeve + bare lower forearm
+      const upperGeo = this.trackGeo(
+        new THREE.CylinderGeometry(0.062 * w, 0.06 * w, armLen * 0.44, 10),
+      );
+      const upperMesh = new THREE.Mesh(upperGeo, sleeveMat);
+      upperMesh.position.y = -armLen * 0.24;
+      upperMesh.castShadow = true;
+      pivot.add(upperMesh);
 
-    // Crisp cuff ring
-    const cuffGeo = this.trackGeo(new THREE.TorusGeometry(0.052 * w, 0.012 * w, 8, 12));
-    const cuff = new THREE.Mesh(cuffGeo, cuffMat);
-    cuff.rotation.x = Math.PI / 2;
-    cuff.position.y = -armLen * 0.88;
-    pivot.add(cuff);
+      const lowerGeo = this.trackGeo(
+        new THREE.CapsuleGeometry(0.048 * w, Math.max(0.05, armLen * 0.5), 6, 10),
+      );
+      const lowerMesh = new THREE.Mesh(lowerGeo, skinMat);
+      lowerMesh.position.y = -armLen * 0.64;
+      lowerMesh.castShadow = true;
+      pivot.add(lowerMesh);
+    } else {
+      const armGeo = this.trackGeo(
+        new THREE.CapsuleGeometry(0.052 * w, Math.max(0.08, armLen - 0.1), 6, 10),
+      );
+      const armMesh = new THREE.Mesh(armGeo, sleeveMat);
+      armMesh.position.y = -armLen * 0.5;
+      armMesh.castShadow = true;
+      pivot.add(armMesh);
+
+      // Crisp cuff ring
+      const cuffGeo = this.trackGeo(new THREE.TorusGeometry(0.052 * w, 0.012 * w, 8, 12));
+      const cuff = new THREE.Mesh(cuffGeo, cuffMat);
+      cuff.rotation.x = Math.PI / 2;
+      cuff.position.y = -armLen * 0.88;
+      pivot.add(cuff);
+    }
 
     // Rounded toy hand
     const handGeo = this.trackGeo(new THREE.SphereGeometry(0.062 * w, 12, 10));
@@ -1006,6 +1060,256 @@ export class CharacterMesh {
       hip.position.y = 0.08 * h;
       hip.scale.set(1, 0.52, 0.96);
       this.torsoGroup.add(hip);
+    } else if (style === 'track_jersey') {
+      // Sporty athletic jersey with crisp contrasting shoulder/chest stripes & collar zip
+      const jerseyGeo = this.trackGeo(
+        new THREE.CylinderGeometry(0.19 * w, 0.21 * w, 0.45 * h, 18),
+      );
+      const jersey = new THREE.Mesh(jerseyGeo, topMat);
+      jersey.position.y = 0.31 * h;
+      jersey.castShadow = true;
+      jersey.receiveShadow = true;
+      this.torsoGroup.add(jersey);
+
+      // Contrasting hip / athletic track shorts base
+      const hipGeo = this.trackGeo(new THREE.SphereGeometry(0.208 * w, 14, 10));
+      const hip = new THREE.Mesh(hipGeo, bottomMat);
+      hip.position.y = 0.08 * h;
+      hip.scale.set(1.0, 0.52, 0.96);
+      hip.castShadow = true;
+      this.torsoGroup.add(hip);
+
+      // Crisp horizontal twin chest stripes (accent + white athletic racing band)
+      const upperStripeGeo = this.trackGeo(new THREE.TorusGeometry(0.196 * w, 0.019 * w, 8, 22));
+      const upperStripe = new THREE.Mesh(upperStripeGeo, accentMat);
+      upperStripe.rotation.x = Math.PI / 2;
+      upperStripe.position.y = 0.41 * h;
+      this.torsoGroup.add(upperStripe);
+
+      const lowerStripeGeo = this.trackGeo(new THREE.TorusGeometry(0.201 * w, 0.012 * w, 8, 22));
+      const lowerStripe = new THREE.Mesh(lowerStripeGeo, whiteMat);
+      lowerStripe.rotation.x = Math.PI / 2;
+      lowerStripe.position.y = 0.355 * h;
+      this.torsoGroup.add(lowerStripe);
+
+      // Contrasting shoulder yoke stripes
+      const shStripeGeo = this.trackGeo(new THREE.BoxGeometry(0.068 * w, 0.028 * h, 0.14 * w));
+      for (const s of [-1, 1]) {
+        const sh = new THREE.Mesh(shStripeGeo, accentMat);
+        sh.position.set(s * 0.145 * w, 0.515 * h, 0);
+        sh.rotation.z = s * -0.18;
+        this.torsoGroup.add(sh);
+      }
+
+      // Sporty stand-up zip collar + front zipper placket
+      const collarGeo = this.trackGeo(
+        new THREE.CylinderGeometry(0.122 * w, 0.142 * w, 0.075 * h, 16),
+      );
+      const collar = new THREE.Mesh(collarGeo, accentMat);
+      collar.position.y = 0.53 * h;
+      this.torsoGroup.add(collar);
+
+      const zipGeo = this.trackGeo(new THREE.BoxGeometry(0.022 * w, 0.24 * h, 0.024 * w));
+      const zip = new THREE.Mesh(zipGeo, whiteMat);
+      zip.position.set(0, 0.42 * h, 0.195 * w);
+      this.torsoGroup.add(zip);
+
+      // Tiny metallic zipper pull tab
+      const pullGeo = this.trackGeo(new THREE.BoxGeometry(0.018 * w, 0.032 * h, 0.012 * w));
+      const pull = new THREE.Mesh(pullGeo, this.makeToyMat('#e2e8f0', 0.22, 0.72));
+      pull.position.set(0, 0.47 * h, 0.212 * w);
+      this.torsoGroup.add(pull);
+
+      // Cute sporty team emblem patch on chest
+      const badgeGeo = this.trackGeo(new THREE.CylinderGeometry(0.032 * w, 0.032 * w, 0.012, 12));
+      const badge = new THREE.Mesh(badgeGeo, whiteMat);
+      badge.rotation.x = Math.PI / 2;
+      badge.position.set(0.088 * w, 0.44 * h, 0.192 * w);
+      this.torsoGroup.add(badge);
+    } else if (style === 'mascot_suit') {
+      // Chubby plush bear mascot torso with round cream belly patch & cute fluffy tail!
+      const plushBodyGeo = this.trackGeo(new THREE.SphereGeometry(0.265 * w, 20, 16));
+      const plushBody = new THREE.Mesh(plushBodyGeo, topMat);
+      plushBody.position.y = 0.29 * h;
+      plushBody.scale.set(1.06, 1.12, 0.98);
+      plushBody.castShadow = true;
+      plushBody.receiveShadow = true;
+      this.torsoGroup.add(plushBody);
+
+      // Round cream belly patch on front (+Z)
+      const bellyGeo = this.trackGeo(new THREE.SphereGeometry(0.185 * w, 16, 14));
+      const belly = new THREE.Mesh(bellyGeo, accentMat);
+      belly.position.set(0, 0.26 * h, 0.135 * w);
+      belly.scale.set(0.95, 1.05, 0.68);
+      belly.castShadow = true;
+      this.torsoGroup.add(belly);
+
+      // Plush collar ruff around neck
+      const ruffGeo = this.trackGeo(new THREE.TorusGeometry(0.145 * w, 0.042 * w, 10, 18));
+      const ruff = new THREE.Mesh(ruffGeo, topMat);
+      ruff.rotation.x = Math.PI / 2;
+      ruff.position.y = 0.515 * h;
+      this.torsoGroup.add(ruff);
+
+      // Festive red mascot bow tie on neck for extra parade charm
+      const bowMat = this.makeToyMat('#e63946', 0.48);
+      const wingGeo = this.trackGeo(new THREE.ConeGeometry(0.045 * w, 0.092 * w, 6));
+      for (const s of [-1, 1]) {
+        const wing = new THREE.Mesh(wingGeo, bowMat);
+        wing.position.set(s * 0.048 * w, 0.49 * h, 0.22 * w);
+        wing.rotation.z = s * (Math.PI / 2);
+        wing.scale.set(1, 1, 0.45);
+        this.torsoGroup.add(wing);
+      }
+      const knotGeo = this.trackGeo(new THREE.SphereGeometry(0.026 * w, 8, 8));
+      const knot = new THREE.Mesh(knotGeo, bowMat);
+      knot.position.set(0, 0.49 * h, 0.222 * w);
+      this.torsoGroup.add(knot);
+
+      // Cute fluffy round bear tail on back (-Z)!
+      const tailGeo = this.trackGeo(new THREE.SphereGeometry(0.098 * w, 12, 10));
+      const tail = new THREE.Mesh(tailGeo, accentMat);
+      tail.position.set(0, 0.14 * h, -0.275 * w);
+      tail.castShadow = true;
+      this.torsoGroup.add(tail);
+    } else if (style === 'aloha_shirt') {
+      // Vibrant sunny vacation Aloha shirt with playful tropical floral/leaf dots & open collar!
+      const shirtGeo = this.trackGeo(
+        new THREE.CylinderGeometry(0.188 * w, 0.225 * w, 0.41 * h, 20),
+      );
+      const shirt = new THREE.Mesh(shirtGeo, topMat);
+      shirt.position.y = 0.32 * h;
+      shirt.castShadow = true;
+      shirt.receiveShadow = true;
+      this.torsoGroup.add(shirt);
+
+      // Sunny vacation shorts hip base
+      const shortsGeo = this.trackGeo(
+        new THREE.CylinderGeometry(0.205 * w, 0.218 * w, 0.16 * h, 18),
+      );
+      const shorts = new THREE.Mesh(shortsGeo, bottomMat);
+      shorts.position.y = 0.08 * h;
+      shorts.castShadow = true;
+      shorts.receiveShadow = true;
+      this.torsoGroup.add(shorts);
+
+      // Open camp-collar V-neck showing warm skin + crisp folded collar lapels
+      const vNeckShape = new THREE.Shape();
+      vNeckShape.moveTo(-0.075 * w, 0.15 * h);
+      vNeckShape.lineTo(0.075 * w, 0.15 * h);
+      vNeckShape.lineTo(0, -0.02 * h);
+      vNeckShape.closePath();
+      const vNeckGeo = this.trackGeo(new THREE.ShapeGeometry(vNeckShape));
+      const vNeck = new THREE.Mesh(vNeckGeo, skinMat);
+      vNeck.position.set(0, 0.375 * h, 0.197 * w);
+      this.torsoGroup.add(vNeck);
+
+      const collarFlapGeo = this.trackGeo(new THREE.BoxGeometry(0.068 * w, 0.13 * h, 0.024 * w));
+      for (const s of [-1, 1]) {
+        const flap = new THREE.Mesh(collarFlapGeo, topMat);
+        flap.position.set(s * 0.072 * w, 0.465 * h, 0.194 * w);
+        flap.rotation.z = s * -0.42;
+        flap.rotation.y = s * 0.22;
+        this.torsoGroup.add(flap);
+      }
+
+      // Coconut-wood / white shirt buttons down front
+      const btnGeo = this.trackGeo(new THREE.SphereGeometry(0.014 * w, 8, 8));
+      for (let i = 0; i < 3; i++) {
+        const btn = new THREE.Mesh(btnGeo, whiteMat);
+        btn.position.set(0, (0.31 - i * 0.072) * h, 0.214 * w);
+        this.torsoGroup.add(btn);
+      }
+
+      // Playful tropical hibiscus flowers & palm-leaf dots scattered around the Aloha shirt
+      const flowerGeo = this.trackGeo(new THREE.DodecahedronGeometry(0.032 * w, 0));
+      const centerGeo = this.trackGeo(new THREE.SphereGeometry(0.013 * w, 6, 6));
+      const leafGeo = this.trackGeo(new THREE.SphereGeometry(0.026 * w, 8, 6));
+      const leafMat = this.makeToyMat('#52d17c', 0.6);
+      const centerMat = this.makeToyMat('#ffe066', 0.45);
+      const motifAngles: Array<[number, number, boolean]> = [
+        [-0.65, 0.4, true],
+        [0.72, 0.36, true],
+        [-0.36, 0.22, false],
+        [0.42, 0.2, true],
+        [-1.32, 0.32, true],
+        [1.36, 0.28, false],
+        [2.45, 0.38, true],
+        [-2.4, 0.26, true],
+        [Math.PI, 0.33, false],
+      ];
+      for (const [ang, yFrac, isFlower] of motifAngles) {
+        const rad = THREE.MathUtils.lerp(0.222, 0.192, (yFrac - 0.14) / 0.36) * w;
+        const px = Math.sin(ang) * rad;
+        const pz = Math.cos(ang) * rad;
+        if (isFlower) {
+          const fl = new THREE.Mesh(flowerGeo, accentMat);
+          fl.position.set(px, yFrac * h, pz);
+          fl.scale.set(1.0, 0.95, 0.55);
+          fl.rotation.y = ang;
+          this.torsoGroup.add(fl);
+
+          const ct = new THREE.Mesh(centerGeo, centerMat);
+          ct.position.set(Math.sin(ang) * (rad + 0.015 * w), yFrac * h, Math.cos(ang) * (rad + 0.015 * w));
+          this.torsoGroup.add(ct);
+        } else {
+          const lf = new THREE.Mesh(leafGeo, leafMat);
+          lf.position.set(px, yFrac * h, pz);
+          lf.scale.set(1.35, 0.65, 0.55);
+          lf.rotation.y = ang;
+          lf.rotation.z = 0.4;
+          this.torsoGroup.add(lf);
+        }
+      }
+    } else if (style === 'swimwear') {
+      // Sporty bright surf rashguard top + contrasting swim trunks / boardshorts!
+      const rashGeo = this.trackGeo(
+        new THREE.CylinderGeometry(0.178 * w, 0.194 * w, 0.31 * h, 18),
+      );
+      const rash = new THREE.Mesh(rashGeo, topMat);
+      rash.position.y = 0.37 * h;
+      rash.castShadow = true;
+      rash.receiveShadow = true;
+      this.torsoGroup.add(rash);
+
+      // Sporty rashguard collar trim ring
+      const neckTrimGeo = this.trackGeo(new THREE.TorusGeometry(0.12 * w, 0.022 * w, 8, 18));
+      const neckTrim = new THREE.Mesh(neckTrimGeo, accentMat);
+      neckTrim.rotation.x = Math.PI / 2;
+      neckTrim.position.y = 0.52 * h;
+      this.torsoGroup.add(neckTrim);
+
+      // Athletic surf wave / chest stripe across rashguard
+      const surfBandGeo = this.trackGeo(new THREE.TorusGeometry(0.189 * w, 0.018 * w, 8, 22));
+      const surfBand = new THREE.Mesh(surfBandGeo, accentMat);
+      surfBand.rotation.x = Math.PI / 2;
+      surfBand.position.y = 0.37 * h;
+      this.torsoGroup.add(surfBand);
+
+      // Contrasting boardshorts / swim trunks lower half
+      const trunksGeo = this.trackGeo(
+        new THREE.CylinderGeometry(0.196 * w, 0.222 * w, 0.22 * h, 18),
+      );
+      const trunks = new THREE.Mesh(trunksGeo, bottomMat);
+      trunks.position.y = 0.11 * h;
+      trunks.castShadow = true;
+      trunks.receiveShadow = true;
+      this.torsoGroup.add(trunks);
+
+      // Waistband & crisp white surf drawstring bow!
+      const waistGeo = this.trackGeo(new THREE.TorusGeometry(0.198 * w, 0.02 * w, 8, 20));
+      const waist = new THREE.Mesh(waistGeo, accentMat);
+      waist.rotation.x = Math.PI / 2;
+      waist.position.y = 0.22 * h;
+      this.torsoGroup.add(waist);
+
+      const cordGeo = this.trackGeo(new THREE.CapsuleGeometry(0.009 * w, 0.055 * h, 4, 6));
+      for (const s of [-1, 1]) {
+        const cord = new THREE.Mesh(cordGeo, whiteMat);
+        cord.position.set(s * 0.02 * w, 0.18 * h, 0.205 * w);
+        cord.rotation.z = s * 0.22;
+        this.torsoGroup.add(cord);
+      }
     }
 
     // Bow tie accessory mounted neatly on collar
@@ -1024,6 +1328,54 @@ export class CharacterMesh {
       bowGroup.add(new THREE.Mesh(knotGeo, accentMat));
       this.torsoGroup.add(bowGroup);
     }
+
+    // Chunky striped inflatable swim ring worn snugly around the waist (torsoGroup)!
+    if (app.accessory === 'swim_ring') {
+      this.buildSwimRingProp(h, w);
+    }
+  }
+
+  private buildSwimRingProp(h: number, w: number): void {
+    const app = this.spec.appearance;
+    // Generate crisp glossy striped inflatable vinyl CanvasTexture
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const stripes = 8;
+      const sw = canvas.width / stripes;
+      const stripeA = app.accentColor === '#ffffff' ? '#ff6b6b' : app.accentColor;
+      const stripeB = '#ffffff';
+      const stripeC = app.outfitTopColor;
+      for (let i = 0; i < stripes; i++) {
+        ctx.fillStyle = i % 2 === 0 ? stripeB : i % 4 === 1 ? stripeA : stripeC;
+        ctx.fillRect(i * sw, 0, sw, canvas.height);
+      }
+      // Subtle seam highlight line
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.fillRect(0, canvas.height * 0.46, canvas.width, 4);
+    }
+    const ringTex = this.trackTex(new THREE.CanvasTexture(canvas));
+    ringTex.colorSpace = THREE.SRGBColorSpace;
+    ringTex.wrapS = THREE.RepeatWrapping;
+    ringTex.wrapT = THREE.RepeatWrapping;
+
+    const ringMat = this.trackMat(
+      new THREE.MeshStandardMaterial({
+        map: ringTex,
+        roughness: 0.24,
+        metalness: 0.05,
+      }),
+    );
+
+    const ringGeo = this.trackGeo(new THREE.TorusGeometry(0.285 * w, 0.095 * w, 14, 28));
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.set(0, 0.2 * h, 0.01 * w);
+    ring.rotation.x = Math.PI / 2 + 0.06;
+    ring.castShadow = true;
+    ring.receiveShadow = true;
+    this.torsoGroup.add(ring);
   }
 
   private buildHair(
@@ -1519,6 +1871,175 @@ export class CharacterMesh {
         break;
       }
 
+      case 'straw_hat': {
+        // Classic wide-brimmed woven summer straw hat inside hatPivot (flies spinning sky-high when popped!)
+        const strawMat = this.makeToyMat('#f2cf7e', 0.78, 0.02);
+        const strawDarkMat = this.makeToyMat('#d8ae58', 0.82, 0.02);
+        const ribbonColor =
+          this.spec.appearance.accentColor === '#ffffff' ? '#ff6b6b' : this.spec.appearance.accentColor;
+        const ribbonMat = this.makeToyMat(ribbonColor, 0.5);
+
+        const hatGroup = new THREE.Group();
+        // Slightly tilted back so wide brim frames the face cheerfully without hiding the eyes!
+        hatGroup.position.set(0, r * 0.86, -r * 0.08);
+        hatGroup.rotation.x = -0.18;
+        hatContent.add(hatGroup);
+
+        // Wide woven brim + gently rolled rim edge
+        const brimGeo = this.trackGeo(new THREE.CylinderGeometry(r * 1.56, r * 1.62, 0.026, 26));
+        const brim = new THREE.Mesh(brimGeo, strawMat);
+        brim.castShadow = true;
+        brim.receiveShadow = true;
+        hatGroup.add(brim);
+
+        const rimTorusGeo = this.trackGeo(new THREE.TorusGeometry(r * 1.58, 0.018, 8, 28));
+        const rimTorus = new THREE.Mesh(rimTorusGeo, strawDarkMat);
+        rimTorus.rotation.x = Math.PI / 2;
+        hatGroup.add(rimTorus);
+
+        // Rounded straw crown dome
+        const crownGeo = this.trackGeo(new THREE.CylinderGeometry(r * 0.78, r * 0.94, r * 0.52, 22));
+        const crown = new THREE.Mesh(crownGeo, strawMat);
+        crown.position.y = r * 0.26;
+        crown.castShadow = true;
+        hatGroup.add(crown);
+
+        const crownTopGeo = this.trackGeo(new THREE.SphereGeometry(r * 0.78, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.5));
+        const crownTop = new THREE.Mesh(crownTopGeo, strawMat);
+        crownTop.position.y = r * 0.5;
+        crownTop.scale.set(1, 0.28, 1);
+        hatGroup.add(crownTop);
+
+        // Colorful summer ribbon band + cute trailing bow knot on the side
+        const bandGeo = this.trackGeo(new THREE.CylinderGeometry(r * 0.91, r * 0.95, r * 0.16, 22));
+        const band = new THREE.Mesh(bandGeo, ribbonMat);
+        band.position.y = r * 0.1;
+        hatGroup.add(band);
+
+        const bowLoopGeo = this.trackGeo(new THREE.SphereGeometry(r * 0.16, 10, 8));
+        for (const s of [-1, 1]) {
+          const loop = new THREE.Mesh(bowLoopGeo, ribbonMat);
+          loop.position.set(r * 0.94, r * 0.11, s * r * 0.14);
+          loop.scale.set(0.45, 0.65, 1.15);
+          hatGroup.add(loop);
+        }
+        break;
+      }
+
+      case 'mascot_ears': {
+        // Cute oversized plush bear ears on a headband inside hatPivot (pops off hilariously!)
+        const earOuterMat = this.makeToyMat(this.spec.appearance.outfitTopColor, 0.74);
+        const earInnerMat = this.makeToyMat(this.spec.appearance.accentColor, 0.68);
+        const bandMat = this.makeToyMat(this.spec.appearance.outfitBottomColor, 0.62);
+
+        const earsGroup = new THREE.Group();
+        earsGroup.position.set(0, r * 0.56, 0);
+        hatContent.add(earsGroup);
+
+        // Headband arc hugging the crown
+        const hbGeo = this.trackGeo(new THREE.TorusGeometry(r * 1.04, r * 0.075, 10, 22, Math.PI));
+        const hb = new THREE.Mesh(hbGeo, bandMat);
+        hb.position.y = -r * 0.08;
+        hb.castShadow = true;
+        earsGroup.add(hb);
+
+        // Twin oversized plush round bear ears!
+        const outerGeo = this.trackGeo(new THREE.SphereGeometry(r * 0.44, 16, 12));
+        const innerGeo = this.trackGeo(new THREE.SphereGeometry(r * 0.26, 12, 10));
+        for (const s of [-1, 1]) {
+          const earHolder = new THREE.Group();
+          earHolder.position.set(s * r * 0.78, r * 0.68, -r * 0.02);
+          earHolder.rotation.z = s * -0.22;
+          earsGroup.add(earHolder);
+
+          const outer = new THREE.Mesh(outerGeo, earOuterMat);
+          outer.scale.set(1.0, 1.0, 0.52);
+          outer.castShadow = true;
+          earHolder.add(outer);
+
+          const inner = new THREE.Mesh(innerGeo, earInnerMat);
+          inner.position.set(0, -r * 0.03, r * 0.17);
+          inner.scale.set(0.92, 0.92, 0.45);
+          earHolder.add(inner);
+        }
+        break;
+      }
+
+      case 'snorkel': {
+        // Colorful diving goggles resting cleanly on forehead/eyes + curved bright snorkel tube on side!
+        const goggleMat = accentMat;
+        const tubeMat = this.makeToyMat('#ff595e', 0.38, 0.08);
+        const strapMat = this.makeToyMat('#1d3557', 0.68);
+        const lensMat = this.trackMat(
+          new THREE.MeshStandardMaterial({
+            color: '#9bf6ff',
+            roughness: 0.12,
+            metalness: 0.12,
+            transparent: true,
+            opacity: 0.26, // Crystal-clear aqua lens so eyes & expressions stay 100% readable
+          }),
+        );
+
+        // Diving mask resting high on brow/forehead-eyes edge so face & eyes shine cleanly!
+        const maskGroup = new THREE.Group();
+        maskGroup.position.set(0, r * 0.42, r * 0.94);
+        maskGroup.rotation.x = -0.32;
+        accGroup.add(maskGroup);
+
+        const rimGeo = this.trackGeo(new THREE.TorusGeometry(r * 0.24, r * 0.052, 10, 18));
+        const paneGeo = this.trackGeo(new THREE.CircleGeometry(r * 0.22, 16));
+        for (const s of [-1, 1]) {
+          const rim = new THREE.Mesh(rimGeo, goggleMat);
+          rim.position.set(s * r * 0.28, 0, 0);
+          rim.scale.set(1.12, 0.88, 1.0);
+          rim.castShadow = true;
+          maskGroup.add(rim);
+
+          const pane = new THREE.Mesh(paneGeo, lensMat);
+          pane.position.set(s * r * 0.28, 0, 0.008);
+          pane.scale.set(1.1, 0.86, 1);
+          maskGroup.add(pane);
+        }
+        const bridgeGeo = this.trackGeo(new THREE.BoxGeometry(r * 0.16, r * 0.08, r * 0.08));
+        maskGroup.add(new THREE.Mesh(bridgeGeo, goggleMat));
+
+        // Elastic goggle strap wrapping around head
+        const strapGeo = this.trackGeo(new THREE.TorusGeometry(r * 1.05, r * 0.045, 8, 24));
+        const strap = new THREE.Mesh(strapGeo, strapMat);
+        strap.position.set(0, r * 0.24, 0);
+        strap.rotation.x = Math.PI / 2 - 0.24;
+        accGroup.add(strap);
+
+        // Curved bright J-shaped snorkel tube rising up the right side (+X) of the head!
+        const snorkelCurve = new THREE.CatmullRomCurve3([
+          new THREE.Vector3(r * 0.56, -r * 0.44, r * 0.72),
+          new THREE.Vector3(r * 1.12, -r * 0.42, r * 0.42),
+          new THREE.Vector3(r * 1.18, r * 0.06, r * 0.14),
+          new THREE.Vector3(r * 1.16, r * 0.82, r * 0.02),
+          new THREE.Vector3(r * 1.12, r * 1.38, -r * 0.06),
+        ]);
+        const tubeGeo = this.trackGeo(new THREE.TubeGeometry(snorkelCurve, 18, r * 0.082, 10, false));
+        const tube = new THREE.Mesh(tubeGeo, goggleMat);
+        tube.castShadow = true;
+        accGroup.add(tube);
+
+        // High-visibility coral-red splash guard tip at top of snorkel!
+        const tipGeo = this.trackGeo(new THREE.CylinderGeometry(r * 0.105, r * 0.095, r * 0.28, 10));
+        const tip = new THREE.Mesh(tipGeo, tubeMat);
+        tip.position.set(r * 1.12, r * 1.46, -r * 0.07);
+        tip.rotation.x = -0.1;
+        tip.castShadow = true;
+        accGroup.add(tip);
+
+        // Mouthpiece bite stub
+        const mouthGeo = this.trackGeo(new THREE.CylinderGeometry(r * 0.07, r * 0.07, r * 0.16, 8));
+        const mouth = new THREE.Mesh(mouthGeo, strapMat);
+        mouth.position.set(r * 0.54, -r * 0.44, r * 0.74);
+        mouth.rotation.z = Math.PI / 2;
+        accGroup.add(mouth);
+        break;
+      }
+
       default:
         break;
     }
@@ -1624,6 +2145,133 @@ export class CharacterMesh {
     bGroup.add(centerRose);
   }
 
+  private buildTrophyProp(armPivot: THREE.Group, h: number): void {
+    // Shiny golden championship cup held proudly UP in the right hand!
+    const trophyGroup = new THREE.Group();
+    trophyGroup.position.set(0.015, -0.31 * h, 0.045);
+    // Counters the forward-lifted arm rotation so the trophy points cleanly UPWARD!
+    trophyGroup.rotation.set(1.08, 0, -0.14);
+    armPivot.add(trophyGroup);
+
+    const goldMat = this.trackMat(
+      new THREE.MeshStandardMaterial({
+        color: '#ffd54f',
+        roughness: 0.2,
+        metalness: 0.72,
+        emissive: '#ff9f1c',
+        emissiveIntensity: 0.14,
+      }),
+    );
+    const woodBaseMat = this.makeToyMat('#5c3317', 0.48, 0.08);
+    const plaqueMat = this.makeToyMat('#fff3b0', 0.25, 0.65);
+
+    // Dark polished wooden pedestal base
+    const baseGeo = this.trackGeo(new THREE.CylinderGeometry(0.068, 0.084, 0.085, 14));
+    const base = new THREE.Mesh(baseGeo, woodBaseMat);
+    base.position.y = 0.01;
+    base.castShadow = true;
+    trophyGroup.add(base);
+
+    // Tiny golden name plate on base
+    const plateGeo = this.trackGeo(new THREE.BoxGeometry(0.072, 0.036, 0.018));
+    const plate = new THREE.Mesh(plateGeo, plaqueMat);
+    plate.position.set(0, 0.01, 0.072);
+    trophyGroup.add(plate);
+
+    // Tapered gold stem + decorative collar ring
+    const stemGeo = this.trackGeo(new THREE.CylinderGeometry(0.024, 0.042, 0.12, 12));
+    const stem = new THREE.Mesh(stemGeo, goldMat);
+    stem.position.y = 0.11;
+    stem.castShadow = true;
+    trophyGroup.add(stem);
+
+    const ringGeo = this.trackGeo(new THREE.TorusGeometry(0.038, 0.012, 8, 14));
+    const ring = new THREE.Mesh(ringGeo, goldMat);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.16;
+    trophyGroup.add(ring);
+
+    // Flared championship chalice cup bowl
+    const cupGeo = this.trackGeo(new THREE.CylinderGeometry(0.118, 0.044, 0.19, 18));
+    const cup = new THREE.Mesh(cupGeo, goldMat);
+    cup.position.y = 0.265;
+    cup.castShadow = true;
+    trophyGroup.add(cup);
+
+    // Glossy rolled cup rim
+    const rimGeo = this.trackGeo(new THREE.TorusGeometry(0.118, 0.016, 10, 20));
+    const rim = new THREE.Mesh(rimGeo, goldMat);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = 0.36;
+    trophyGroup.add(rim);
+
+    // Twin iconic curved C-shaped trophy handles on left & right
+    const handleGeo = this.trackGeo(new THREE.TorusGeometry(0.062, 0.014, 8, 16, Math.PI * 1.15));
+    for (const s of [-1, 1]) {
+      const handle = new THREE.Mesh(handleGeo, goldMat);
+      handle.position.set(s * 0.105, 0.27, 0);
+      handle.rotation.z = s > 0 ? -Math.PI * 0.56 : Math.PI * 0.42;
+      handle.castShadow = true;
+      trophyGroup.add(handle);
+    }
+
+    // Gleaming champion star emblem on front of cup
+    const starMesh = new THREE.Mesh(this.shared.starGeometry, plaqueMat);
+    starMesh.position.set(0, 0.275, 0.092);
+    starMesh.scale.setScalar(0.72);
+    trophyGroup.add(starMesh);
+  }
+
+  private buildPomPomProp(
+    armPivot: THREE.Group,
+    h: number,
+    topMat: THREE.Material,
+    accentMat: THREE.Material,
+    whiteMat: THREE.Material,
+  ): THREE.Group {
+    // Fluffy vibrant cheerleading pom-pom mounted right in each hand!
+    const pomGroup = new THREE.Group();
+    pomGroup.position.set(0, -0.31 * h - 0.045, 0.025);
+    armPivot.add(pomGroup);
+
+    const coreGeo = this.trackGeo(new THREE.IcosahedronGeometry(0.088, 1));
+    const core = new THREE.Mesh(coreGeo, accentMat);
+    core.castShadow = true;
+    pomGroup.add(core);
+
+    // Radiating vibrant streamer tufts for unmistakable fluffy cheerleader silhouette
+    const tuftGeo = this.trackGeo(new THREE.ConeGeometry(0.042, 0.155, 6));
+    const mats = [accentMat, whiteMat, topMat];
+    const dirs: Array<[number, number, number]> = [
+      [1, 0.2, 0.1],
+      [-1, 0.2, 0.1],
+      [0.1, 1, 0.2],
+      [0.1, -1, 0.2],
+      [0.2, 0.1, 1],
+      [0.2, 0.1, -1],
+      [0.7, 0.7, 0.5],
+      [-0.7, 0.7, 0.5],
+      [0.7, -0.7, 0.5],
+      [-0.7, -0.7, 0.5],
+      [0.65, 0.55, -0.65],
+      [-0.65, 0.55, -0.65],
+      [0.65, -0.55, -0.65],
+      [-0.65, -0.55, -0.65],
+    ];
+    const up = new THREE.Vector3(0, 1, 0);
+    const v = new THREE.Vector3();
+    dirs.forEach(([dx, dy, dz], idx) => {
+      v.set(dx, dy, dz).normalize();
+      const tuft = new THREE.Mesh(tuftGeo, mats[idx % mats.length]);
+      tuft.position.copy(v).multiplyScalar(0.082);
+      tuft.quaternion.setFromUnitVectors(up, v);
+      tuft.castShadow = idx < 6;
+      pomGroup.add(tuft);
+    });
+
+    return pomGroup;
+  }
+
   public setPhotoCaptureMode(isPhoto: boolean): void {
     this.isPhotoMode = isPhoto;
     this.updateReactionVisibility();
@@ -1691,9 +2339,17 @@ export class CharacterMesh {
         targetBodyY = Math.sin(t * 2.5) * 0.012;
         if (this.holdsRightProp) {
           targetRArmX =
-            (this.spec.appearance.accessory === 'flag' ? -0.96 : -0.78) +
+            (this.spec.appearance.accessory === 'flag' ||
+            this.spec.appearance.accessory === 'trophy'
+              ? -0.96
+              : -0.78) +
             Math.sin(t * 2.4) * 0.08;
-          targetRArmZ = 0.24;
+          targetRArmZ = 0.26;
+        } else if (this.holdsPomPoms) {
+          targetLArmX = -0.65 + Math.sin(t * 5.2) * 0.18;
+          targetRArmX = -0.65 - Math.sin(t * 5.2) * 0.18;
+          targetLArmZ = -0.45;
+          targetRArmZ = 0.45;
         }
         break;
       }
@@ -1795,7 +2451,10 @@ export class CharacterMesh {
           // Dramatic bakage lean-back + high victory / flag raise + cheek peace sign!
           targetFallX = -0.26 * p;
           targetFallZ = Math.sin(t * 4.2) * 0.08;
-          if (this.spec.appearance.accessory === 'flag') {
+          if (
+            this.spec.appearance.accessory === 'flag' ||
+            this.spec.appearance.accessory === 'trophy'
+          ) {
             targetRArmX = -1.32 - 0.18 * p + Math.sin(t * 5.5) * 0.1;
             targetRArmZ = 0.3;
           } else {
@@ -1995,6 +2654,12 @@ export class CharacterMesh {
       }
     }
 
+    // Extra clearance for chunky inflatable swim_ring so resting arms hug outside the tube cleanly
+    if (this.wearsSwimRing && isUpright) {
+      if (Math.abs(targetLArmX) < 1.35) targetLArmZ = Math.min(targetLArmZ, -0.44);
+      if (Math.abs(targetRArmX) < 1.35) targetRArmZ = Math.max(targetRArmZ, 0.44);
+    }
+
     // Smooth joint damping for buttery 60 FPS toy motion
     const speed = 13;
     this.animBodyY = damp(this.animBodyY, targetBodyY, speed, dt);
@@ -2030,8 +2695,8 @@ export class CharacterMesh {
     this.leftLegPivot.rotation.set(this.animLLegX, 0, this.animLLegZ);
     this.rightLegPivot.rotation.set(this.animRLegX, 0, this.animRLegZ);
 
-    this.leftPeaceSign.visible = showLeftPeace;
-    this.rightPeaceSign.visible = showRightPeace;
+    this.leftPeaceSign.visible = showLeftPeace && !this.holdsPomPoms;
+    this.rightPeaceSign.visible = showRightPeace && !this.holdsPomPoms;
 
     // Head yaw, pitch & roll toward camera / point of interest
     // Negate headPitchOffset so positive pitch tilts +Z headForward UP toward high-angle cameras!
@@ -2058,7 +2723,7 @@ export class CharacterMesh {
       this.hatPivot.rotation.set(0, 0, 0);
     }
 
-    // Secondary motion: ponytail, veil, tour flag, sunglasses surprise/cheese pop!
+    // Secondary motion: ponytail, veil, tour flag, pom-poms wiggle, sunglasses surprise/cheese pop!
     if (this.ponytailPivot) {
       this.ponytailPivot.rotation.z = Math.sin(t * 4.5 + state.walkPhase) * 0.14;
       this.ponytailPivot.rotation.x = Math.min(0.4, Math.abs(state.velocity.length()) * 0.12);
@@ -2069,6 +2734,19 @@ export class CharacterMesh {
     }
     if (this.flagBannerPivot) {
       this.flagBannerPivot.rotation.y = Math.sin(t * 7.5) * 0.34;
+    }
+    if (this.leftPomPom && this.rightPomPom) {
+      const hype =
+        action === 'jumping' || action === 'posing' || action === 'tiptoe' || state.expression === 'cheese'
+          ? 1.0
+          : 0.38;
+      const shakeFreq = hype > 0.5 ? 24 : 9;
+      const shake = Math.sin(t * shakeFreq) * 0.48 * hype;
+      const bounce = 1 + Math.sin(t * shakeFreq * 0.5) * 0.12 * hype;
+      this.leftPomPom.rotation.set(shake, t * 4.5 * hype, -shake * 0.8);
+      this.rightPomPom.rotation.set(-shake, -t * 4.5 * hype, shake * 0.8);
+      this.leftPomPom.scale.setScalar(bounce);
+      this.rightPomPom.scale.setScalar(bounce);
     }
     if (this.sunglassesGroup) {
       const wantRaise =
@@ -2155,6 +2833,11 @@ export class CharacterMesh {
       mat.dispose();
     }
     this.ownedMaterials.length = 0;
+
+    for (const tex of this.ownedTextures) {
+      tex.dispose();
+    }
+    this.ownedTextures.length = 0;
 
     releaseSharedAssets();
   }

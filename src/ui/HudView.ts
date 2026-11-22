@@ -12,6 +12,7 @@ import { STAGES } from '../game/StageConfig';
 
 export interface HudCallbacks {
   onStartStage(stageId: StageId): void;
+  onSelectStage?(stageId: StageId): void;
   onShutter(): void;
   onSayCheese(): void;
   onZoomChange(zoomNorm: number): void;
@@ -37,14 +38,25 @@ const TIMER_RING_CIRC = 2 * Math.PI * TIMER_RING_RADIUS;
 const CHEESE_RING_RADIUS = 26;
 const CHEESE_RING_CIRC = 2 * Math.PI * CHEESE_RING_RADIUS;
 
+const STAGE_ORDER: readonly StageId[] = [
+  'wedding',
+  'school_trip',
+  'sports_day',
+  'tropical_beach',
+];
+
 const STAGE_THUMBS: Record<StageId, string> = {
   wedding: './assets/wedding-board.jpg',
   school_trip: './assets/shrine-board.jpg',
+  sports_day: './assets/sports-board.jpg',
+  tropical_beach: './assets/beach-board.jpg',
 };
 
-const STAGE_OVERLAY_COPY: Record<StageId, { top: string; main: string }> = {
+const STAGE_CARD_OVERLAYS: Record<StageId, { top: string; main: string }> = {
   wedding: { top: 'Wedding', main: 'ガーデンウェディング' },
   school_trip: { top: '修学旅行', main: '古都の石段' },
+  sports_day: { top: '運動会', main: 'グラグラ表彰台' },
+  tropical_beach: { top: 'SUMMER', main: '大波ビーチ' },
 };
 
 const CHEESE_CALLOUTS = [
@@ -267,8 +279,7 @@ export class HudView {
         </header>
 
         <div class="stage-grid" role="radiogroup" aria-label="ステージ選択">
-          ${this.buildStageCardMarkup('wedding')}
-          ${this.buildStageCardMarkup('school_trip')}
+          ${STAGE_ORDER.map((id) => this.buildStageCardMarkup(id)).join('')}
         </div>
 
         <div class="title-cta-row">
@@ -296,38 +307,31 @@ export class HudView {
     `;
     this.root.appendChild(this.titleScreen);
 
-    const weddingCard = this.titleScreen.querySelector(
-      '#stage-card-wedding',
-    ) as HTMLButtonElement;
-    const schoolCard = this.titleScreen.querySelector(
-      '#stage-card-school_trip',
-    ) as HTMLButtonElement;
-    this.stageCardEls = {
-      wedding: weddingCard,
-      school_trip: schoolCard,
-    };
-    this.stageBestEls = {
-      wedding: weddingCard.querySelector('.stage-best-badge') as HTMLSpanElement,
-      school_trip: schoolCard.querySelector('.stage-best-badge') as HTMLSpanElement,
-    };
+    const cardMap = {} as Record<StageId, HTMLButtonElement>;
+    const bestMap = {} as Record<StageId, HTMLSpanElement>;
+    for (const id of STAGE_ORDER) {
+      const cardEl = this.titleScreen.querySelector(
+        `#stage-card-${id}`,
+      ) as HTMLButtonElement;
+      cardMap[id] = cardEl;
+      bestMap[id] = cardEl.querySelector('.stage-best-badge') as HTMLSpanElement;
+
+      cardEl.addEventListener('click', () => this.selectStage(id, true));
+      cardEl.addEventListener('dblclick', () => {
+        this.selectStage(id, true);
+        this.callbacks.onStartStage(id);
+      });
+    }
+    this.stageCardEls = cardMap;
+    this.stageBestEls = bestMap;
     this.startBtn = this.titleScreen.querySelector('#btn-start') as HTMLButtonElement;
 
-    weddingCard.addEventListener('click', () => this.selectStage('wedding'));
-    schoolCard.addEventListener('click', () => this.selectStage('school_trip'));
-    weddingCard.addEventListener('dblclick', () => {
-      this.selectStage('wedding');
-      this.callbacks.onStartStage('wedding');
-    });
-    schoolCard.addEventListener('dblclick', () => {
-      this.selectStage('school_trip');
-      this.callbacks.onStartStage('school_trip');
-    });
     this.startBtn.addEventListener('click', () => {
       this.startBtn.blur();
       this.callbacks.onStartStage(this.selectedStageId);
     });
 
-    this.selectStage('wedding');
+    this.selectStage('wedding', false);
 
     // =========================================================================
     // B. LIVE CAMERA VIEWFINDER HUD
@@ -832,7 +836,7 @@ export class HudView {
       this.resultScreen.classList.toggle('is-hidden', snapshot.phase !== 'result');
 
       if (snapshot.phase === 'title' && prevPhase !== null) {
-        this.selectStage(snapshot.stageId);
+        this.selectStage(snapshot.stageId, false);
       }
 
       if (snapshot.phase === 'playing') {
@@ -951,7 +955,7 @@ export class HudView {
   // ===========================================================================
   private buildStageCardMarkup(stageId: StageId): string {
     const spec = STAGES[stageId];
-    const overlay = STAGE_OVERLAY_COPY[stageId];
+    const overlay = STAGE_CARD_OVERLAYS[stageId];
     return `
       <button
         type="button"
@@ -980,23 +984,25 @@ export class HudView {
     `;
   }
 
-  private selectStage(stageId: StageId): void {
+  private selectStage(stageId: StageId, notify = false): void {
+    const changed = this.selectedStageId !== stageId;
     this.selectedStageId = stageId;
-    const ids: StageId[] = ['wedding', 'school_trip'];
-    for (const id of ids) {
+    for (const id of STAGE_ORDER) {
       const selected = id === stageId;
       this.stageCardEls[id].classList.toggle('is-selected', selected);
       this.stageCardEls[id].setAttribute('aria-checked', selected ? 'true' : 'false');
     }
+    if (notify && changed) {
+      this.callbacks.onSelectStage?.(stageId);
+    }
   }
 
   private updateTitleScores(bestByStage: Record<StageId, number>): void {
-    const sig = `${bestByStage.wedding ?? 0}|${bestByStage.school_trip ?? 0}`;
+    const sig = STAGE_ORDER.map((id) => bestByStage[id] ?? 0).join('|');
     if (sig === this.lastBestSignature) return;
     this.lastBestSignature = sig;
 
-    const ids: StageId[] = ['wedding', 'school_trip'];
-    for (const id of ids) {
+    for (const id of STAGE_ORDER) {
       const score = Math.round(bestByStage[id] ?? 0);
       const badge = this.stageBestEls[id];
       if (score > 0) {

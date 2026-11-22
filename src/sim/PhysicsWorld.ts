@@ -3,6 +3,7 @@ import {
   NpcRuntimeState,
   SimEvent,
   SimEventType,
+  StageHazardState,
   StageIntruderState,
   StageSpec,
 } from '../types';
@@ -44,17 +45,35 @@ export const PHYSICS_CONFIG = {
   hatPopGravity: 14.5,
   hatPopSpinRate: 10.5,
   hatPopBounceFactor: 0.38,
+  // Podium steep-drop drama (Stage 3 sports_day)
+  steepDropThreshold: 0.28,
+  podiumDropExtraLoss: 0.38,
   // Stage intruder collisions
   deerBonkRadius: 0.68,
   deerBonkBalanceLoss: 0.78,
   deerBonkLaunchSpeed: 4.3,
   doveStartleRadius: 1.35,
   doveHatNudgeRadius: 0.82,
+  oodamaRadius: 0.92,
+  oodamaHitRadius: 1.02,
+  oodamaMaxHitY: 1.35,
+  oodamaLaunchSpeed: 5.5,
+  oodamaLaunchVy: 3.2,
+  beachBallRadius: 0.75,
+  beachBallHitRadius: 0.92,
+  beachBallLaunchSpeed: 3.45,
+  beachBallLaunchVy: 5.2,
+  // Stage 4 crashing shoreline wave
+  waveMaxShoreY: 0.16,
+  waveFrontHalfWidth: 0.55,
+  waveSweepVz: -3.4,
+  waveSweepVy: 1.9,
 } as const;
 
 // Per-NPC transient hit cooldown (seconds) so contact pairs don't spam impulses every tick.
 const hitCooldownMap = new WeakMap<NpcRuntimeState, number>();
 const intruderHitCooldownMap = new WeakMap<NpcRuntimeState, number>();
+const waveHitCooldownMap = new WeakMap<NpcRuntimeState, number>();
 const hatBouncedMap = new WeakMap<NpcRuntimeState, boolean>();
 const intruderEventThrottleMap = new WeakMap<StageIntruderState, number>();
 
@@ -72,6 +91,14 @@ function getIntruderCooldown(npc: NpcRuntimeState): number {
 
 function setIntruderCooldown(npc: NpcRuntimeState, value: number): void {
   intruderHitCooldownMap.set(npc, Math.max(0, value));
+}
+
+function getWaveCooldown(npc: NpcRuntimeState): number {
+  return waveHitCooldownMap.get(npc) ?? 0;
+}
+
+function setWaveCooldown(npc: NpcRuntimeState, value: number): void {
+  waveHitCooldownMap.set(npc, Math.max(0, value));
 }
 
 function clamp(v: number, min: number, max: number): number {
@@ -99,7 +126,15 @@ function emitEvent(
   npc.events.push(evt);
 }
 
-const POPPABLE_HEADWEAR = new Set(['top_hat', 'cap', 'beret', 'flower_crown', 'veil']);
+const POPPABLE_HEADWEAR = new Set([
+  'top_hat',
+  'cap',
+  'beret',
+  'flower_crown',
+  'veil',
+  'straw_hat',
+  'mascot_ears',
+]);
 
 export function triggerHatPop(
   npc: NpcRuntimeState,
@@ -313,6 +348,7 @@ export function stepPhysics(
   dt: number,
   events: SimEvent[],
   intruder?: StageIntruderState,
+  hazard?: StageHazardState,
 ): void {
   if (!Number.isFinite(dt) || dt <= 0) return;
   const safeDt = Math.min(dt, PHYSICS_CONFIG.maxDt);
@@ -324,6 +360,8 @@ export function stepPhysics(
     if (cd > 0) setHitCooldown(npc, cd - safeDt);
     const icd = getIntruderCooldown(npc);
     if (icd > 0) setIntruderCooldown(npc, icd - safeDt);
+    const wcd = getWaveCooldown(npc);
+    if (wcd > 0) setWaveCooldown(npc, wcd - safeDt);
   }
 
   if (intruder) {
@@ -430,10 +468,17 @@ export function stepPhysics(
       newGroundY < prevGroundY - PHYSICS_CONFIG.riserDropThreshold &&
       npc.action !== 'jumping'
     ) {
-      // Stepped or shoved off a riser/step edge!
+      // Stepped or shoved off a riser/step/podium edge!
+      const dropHeight = prevGroundY - newGroundY;
+      const steepDrop = dropHeight > PHYSICS_CONFIG.steepDropThreshold;
       const edgeSpeed = Math.hypot(npc.velocity.x, npc.velocity.z);
+      const sportsPodiumSlip =
+        stage.id === 'sports_day' &&
+        steepDrop &&
+        (edgeSpeed > 0.55 || npc.balance < 0.88);
       if (
         (edgeSpeed > PHYSICS_CONFIG.riserStumbleMinSpeed ||
+          sportsPodiumSlip ||
           npc.action === 'staggering' ||
           npc.balance < 0.72) &&
         npc.action !== 'fallen'
@@ -441,9 +486,15 @@ export function stepPhysics(
         const dirLen = edgeSpeed > 1e-4 ? edgeSpeed : 1;
         const dx = edgeSpeed > 1e-4 ? npc.velocity.x / dirLen : Math.sin(npc.facingYaw);
         const dz = edgeSpeed > 1e-4 ? npc.velocity.z / dirLen : Math.cos(npc.facingYaw);
+        const steepBonus = steepDrop
+          ? (stage.id === 'sports_day' ? PHYSICS_CONFIG.podiumDropExtraLoss : 0.18) +
+            (dropHeight - PHYSICS_CONFIG.steepDropThreshold) * 0.55
+          : 0;
         const extraLoss =
-          PHYSICS_CONFIG.riserStumbleBalanceLoss + 0.14 * Math.min(edgeSpeed, 3.0);
-        npc.velocity.y = Math.max(npc.velocity.y, 1.35);
+          PHYSICS_CONFIG.riserStumbleBalanceLoss +
+          steepBonus +
+          0.14 * Math.min(edgeSpeed, 3.0);
+        npc.velocity.y = Math.max(npc.velocity.y, steepDrop ? 1.85 : 1.35);
         applyBalanceHit(npc, extraLoss, dx, dz, npcById, events, false);
       }
     }
@@ -464,14 +515,24 @@ export function stepPhysics(
         npc.squashY = clamp(1 - impactSpeed * 0.035, 0.72, 0.95);
 
         if (npc.action === 'jumping') {
-          npc.action = 'posing';
-          npc.actionTimer = 0.65;
-          npc.poseIntensity = 1.0;
-          npc.expression = 'cheese';
-          npc.reactionIcon = '✌';
-          npc.reactionTimer = 0.7;
-          emitEvent(npc, events, 'pose', 0.65);
-          triggerJumperLandingBump(npc, npcs, npcById, events);
+          if (npc.balance < 0.7) {
+            // Landing from a chaotic beach-ball boing tumble!
+            npc.action = 'staggering';
+            npc.actionTimer = 0.65;
+            npc.poseIntensity = 0;
+            npc.expression = 'surprised';
+            npc.reactionIcon = '💫';
+            npc.reactionTimer = Math.max(npc.reactionTimer, 0.85);
+          } else {
+            npc.action = 'posing';
+            npc.actionTimer = 0.65;
+            npc.poseIntensity = 1.0;
+            npc.expression = 'cheese';
+            npc.reactionIcon = '✌';
+            npc.reactionTimer = 0.7;
+            emitEvent(npc, events, 'pose', 0.65);
+            triggerJumperLandingBump(npc, npcs, npcById, events);
+          }
         } else if (npc.action === 'staggering' && impactSpeed > 3.1) {
           // Hard landing after tumbling off a riser or carrier's shoulders
           const vLen = Math.hypot(npc.velocity.x, npc.velocity.z);
@@ -649,6 +710,149 @@ export function stepPhysics(
           emitEvent(npc, events, 'intruder_bonk', 0.85);
         }
       }
+    } else if (intruder.kind === 'oodama') {
+      // Stage 3 Sports Day: Giant Red-White Oodama Bowling Ball!
+      const ballSpeed = Math.hypot(intruder.velocity.x, intruder.velocity.z);
+      const ballDirX =
+        ballSpeed > 0.15 ? intruder.velocity.x / ballSpeed : Math.sin(intruder.facingYaw);
+      const ballDirZ =
+        ballSpeed > 0.15 ? intruder.velocity.z / ballSpeed : Math.cos(intruder.facingYaw);
+
+      for (const npc of npcs) {
+        if (npc.action === 'riding_shoulders' || npc.action === 'fallen') continue;
+        if (npc.position.y >= PHYSICS_CONFIG.oodamaMaxHitY) continue;
+        if (getIntruderCooldown(npc) > 0) continue;
+
+        const dx = npc.position.x - intruder.position.x;
+        const dz = npc.position.z - intruder.position.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist >= PHYSICS_CONFIG.oodamaHitRadius) continue;
+
+        setIntruderCooldown(npc, 0.9);
+        setHitCooldown(npc, 0.38);
+
+        const radX = dist > 1e-4 ? dx / dist : ballDirX;
+        const radZ = dist > 1e-4 ? dz / dist : dz >= 0 ? 1 : -1;
+        // Bowling-pin scatter: blend outward push + ball travel + strong front/back fan
+        let lx = radX * 0.65 + ballDirX * 0.7;
+        let lz = radZ * 0.75 + ballDirZ * 0.25 + (dz >= 0 ? 0.5 : -0.5);
+        const lLen = Math.hypot(lx, lz);
+        if (lLen > 1e-4) {
+          lx /= lLen;
+          lz /= lLen;
+        } else {
+          lx = ballDirX;
+          lz = 0.6;
+        }
+
+        npc.sneezeCharge = 0;
+        npc.lensBombProgress = 0;
+        // Guarantee instant balance wipeout (even for steady VIPs!)
+        const wipeoutLoss = npc.spec.archetype === 'vip' ? 1.25 : 1.05;
+        applyBalanceHit(npc, wipeoutLoss, lx, lz, npcById, events, false);
+        npc.velocity.x = lx * PHYSICS_CONFIG.oodamaLaunchSpeed;
+        npc.velocity.z = lz * PHYSICS_CONFIG.oodamaLaunchSpeed;
+        npc.velocity.y = Math.max(npc.velocity.y, PHYSICS_CONFIG.oodamaLaunchVy);
+        npc.expression = npc.balance <= 0 ? 'dizzy' : 'surprised';
+        npc.reactionIcon = npc.balance <= 0 ? '💫' : '!';
+        npc.reactionTimer = Math.max(npc.reactionTimer, 1.45);
+        triggerHatPop(npc, events, 6.4, true);
+        emitEvent(npc, events, 'intruder_bonk', 1.75);
+      }
+    } else if (intruder.kind === 'beach_ball') {
+      // Stage 4 Tropical Beach: Giant Bouncy Beach Ball BOING!
+      const ballSpeed = Math.hypot(intruder.velocity.x, intruder.velocity.z);
+      const ballDirX =
+        ballSpeed > 0.15 ? intruder.velocity.x / ballSpeed : Math.sin(intruder.facingYaw);
+      const ballDirZ =
+        ballSpeed > 0.15 ? intruder.velocity.z / ballSpeed : Math.cos(intruder.facingYaw);
+
+      for (const npc of npcs) {
+        if (npc.action === 'riding_shoulders' || npc.action === 'fallen') continue;
+        // Check generous vertical overlap with ball radius (0.75m) + NPC height
+        if (intruder.position.y > npc.position.y + npc.height + PHYSICS_CONFIG.beachBallRadius + 0.25) {
+          continue;
+        }
+        if (getIntruderCooldown(npc) > 0) continue;
+
+        const dx = npc.position.x - intruder.position.x;
+        const dz = npc.position.z - intruder.position.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist >= PHYSICS_CONFIG.beachBallHitRadius) continue;
+
+        setIntruderCooldown(npc, 0.85);
+        setHitCooldown(npc, 0.34);
+
+        const radX = dist > 1e-4 ? dx / dist : ballDirX;
+        const radZ = dist > 1e-4 ? dz / dist : dz >= 0 ? 1 : -1;
+        let lx = radX * 0.72 + ballDirX * 0.55;
+        let lz = radZ * 0.72 + ballDirZ * 0.35 + (dz >= 0 ? 0.25 : -0.25);
+        const lLen = Math.hypot(lx, lz);
+        if (lLen > 1e-4) {
+          lx /= lLen;
+          lz /= lLen;
+        } else {
+          lx = ballDirX;
+          lz = -0.45;
+        }
+
+        if (npc.riderId !== null) {
+          dismountRider(npc, npcById, events, lx, lz, true);
+        }
+
+        npc.sneezeCharge = 0;
+        npc.lensBombProgress = 0;
+        npc.helpTargetId = null;
+        npc.balance = clamp(Math.min(npc.balance - 0.35, 0.52), 0.2, 1);
+        npc.action = 'jumping';
+        npc.actionTimer = 0.48;
+        npc.expression = 'surprised';
+        npc.reactionIcon = '!';
+        npc.reactionTimer = Math.max(npc.reactionTimer, 1.1);
+        npc.poseIntensity = 0.2;
+        npc.squashY = 1.24;
+        npc.tiltX = clamp(lz * 0.48, -0.75, 0.75);
+        npc.tiltZ = clamp(-lx * 0.48, -0.75, 0.75);
+        npc.velocity.x += lx * PHYSICS_CONFIG.beachBallLaunchSpeed;
+        npc.velocity.z += lz * PHYSICS_CONFIG.beachBallLaunchSpeed;
+        npc.velocity.y = Math.max(npc.velocity.y, PHYSICS_CONFIG.beachBallLaunchVy);
+        triggerHatPop(npc, events, 6.2, true);
+        emitEvent(npc, events, 'ball_boing', 1.55);
+      }
+    }
+  }
+
+  // 2.6. Stage 4 Tropical Beach Crashing Shoreline Wave Physics
+  if (
+    stage.id === 'tropical_beach' &&
+    hazard?.waveActive &&
+    hazard.waveProgress > 0.12 &&
+    hazard.waveProgress < 0.72
+  ) {
+    const waveZ = 2.8 - (hazard.waveProgress / 0.72) * 3.15;
+    for (const npc of npcs) {
+      if (npc.action === 'fallen' || npc.action === 'riding_shoulders') continue;
+      if (npc.position.y >= PHYSICS_CONFIG.waveMaxShoreY) continue;
+      if (Math.abs(npc.position.z - waveZ) >= PHYSICS_CONFIG.waveFrontHalfWidth) continue;
+      if (getWaveCooldown(npc) > 0) continue;
+
+      setWaveCooldown(npc, 1.85);
+      setHitCooldown(npc, 0.35);
+      npc.sneezeCharge = 0;
+      npc.lensBombProgress = 0;
+
+      const lateralScatter = Math.sin(npc.position.x * 2.3 + npc.walkPhase) * 0.55;
+      // Instant hilarious shoreline slip/knockdown (0.95+ effective loss even on steady VIPs!)
+      const waveBalanceLoss = npc.spec.archetype === 'vip' ? 1.2 : 1.02;
+      applyBalanceHit(npc, waveBalanceLoss, lateralScatter * 0.25, -1, npcById, events, false);
+      npc.velocity.x += lateralScatter;
+      npc.velocity.z = PHYSICS_CONFIG.waveSweepVz;
+      npc.velocity.y = Math.max(npc.velocity.y, PHYSICS_CONFIG.waveSweepVy);
+      npc.expression = npc.balance <= 0 ? 'dizzy' : 'surprised';
+      npc.reactionIcon = '💦';
+      npc.reactionTimer = Math.max(npc.reactionTimer, 1.55);
+      triggerHatPop(npc, events, 6.1, true);
+      emitEvent(npc, events, 'slip', 1.5);
     }
   }
 

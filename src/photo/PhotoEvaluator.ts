@@ -8,6 +8,8 @@ import {
   NpcRuntimeState,
   PhotoRank,
   PhotoScoreBreakdown,
+  StageHazardState,
+  StageIntruderKind,
   StageIntruderState,
   StageSpec,
 } from '../types';
@@ -200,10 +202,12 @@ export class PhotoEvaluator {
     npcs: NpcRuntimeState[],
     camera: THREE.PerspectiveCamera,
     intruder?: StageIntruderState,
+    hazard?: StageHazardState,
   ): LiveCameraMetrics {
     const count = npcs.length;
     const evaluated = this.analyzeNpcs(npcs, camera, false);
-    const scores = this.computeScores(evaluated, count);
+    const kusudamaActive = Boolean(hazard && hazard.kusudamaOpen > 0.35);
+    const scores = this.computeScores(evaluated, count, kusudamaActive);
 
     let visibleCount = 0;
     let smilingCount = 0;
@@ -255,10 +259,26 @@ export class PhotoEvaluator {
 
     let intruderAlert: string | undefined;
     if (intruder && (intruder.warningTimer > 0 || intruder.active)) {
-      intruderAlert =
-        intruder.kind === 'dove'
-          ? '🕊️ 暴走ハト接近中！！'
-          : '🦌 奈良のシカ乱入！！';
+      switch (intruder.kind) {
+        case 'dove':
+          intruderAlert = '🕊️ 暴走ハト接近中！！';
+          break;
+        case 'deer':
+          intruderAlert = '🦌 奈良のシカ乱入！！';
+          break;
+        case 'oodama':
+          intruderAlert = '🔴 暴走大玉が転がってくるぞ！！';
+          break;
+        case 'beach_ball':
+          intruderAlert = '🏐 巨大ビーチボール乱入！！';
+          break;
+      }
+    } else if (hazard?.waveActive) {
+      intruderAlert = '🌊 ざっぱーん！！大波直撃中！！';
+    } else if (hazard && hazard.waveWarningTimer > 0) {
+      intruderAlert = '🌊 大波が来るぞ〜！！前列あぶない！！';
+    } else if (hazard && hazard.kusudamaOpen > 0.3) {
+      intruderAlert = '🎊 くす玉パッカーン！！紙吹雪フィーバー！';
     } else if (hasSneezeCharge) {
       intruderAlert = '🤧 くしゃみ爆発寸前！！';
     } else if (hasLensBomb) {
@@ -307,10 +327,15 @@ export class PhotoEvaluator {
     camera: THREE.PerspectiveCamera,
     stage: StageSpec,
     intruder?: StageIntruderState,
+    hazard?: StageHazardState,
   ): PhotoScoreBreakdown {
     const count = npcs.length;
     const evaluated = this.analyzeNpcs(npcs, camera, true).slice(0, count);
-    const scores = this.computeScores(evaluated, count);
+    const waveCrashActive = Boolean(
+      hazard?.waveActive && hazard.waveProgress > 0.1 && hazard.waveProgress < 0.8,
+    );
+    const kusudamaActive = Boolean(hazard && hazard.kusudamaOpen > 0.35);
+    const scores = this.computeScores(evaluated, count, kusudamaActive);
 
     let visibleCount = 0;
     let smilingCount = 0;
@@ -326,16 +351,19 @@ export class PhotoEvaluator {
     let sneezeCount = 0;
     let lensBombCount = 0;
 
-    // Check whether active stage intruder (dove / deer) is captured inside camera frustum
+    // Check whether active stage intruder (dove / deer / oodama / beach_ball) is captured inside camera frustum
     let intruderInFrame = false;
-    let intruderKind: 'dove' | 'deer' | null = null;
+    let intruderKind: StageIntruderKind | null = null;
     if (intruder && intruder.active) {
       const p = intruder.position;
       const baseVisible = this.isWorldPointInFrustum(p.x, p.y, p.z, camera);
       const upperVisible =
         intruder.kind === 'deer'
           ? this.isWorldPointInFrustum(p.x, p.y + 0.95, p.z, camera)
-          : false;
+          : intruder.kind === 'oodama' || intruder.kind === 'beach_ball'
+            ? this.isWorldPointInFrustum(p.x, p.y + 0.65, p.z, camera) ||
+              this.isWorldPointInFrustum(p.x, p.y - 0.5, p.z, camera)
+            : false;
       if (baseVisible || upperVisible) {
         intruderInFrame = true;
         intruderKind = intruder.kind;
@@ -444,7 +472,12 @@ export class PhotoEvaluator {
 
     // Compute 🤣 爆笑度 (comedyScore: 0..100 integer)
     let rawComedy = 0;
-    if (intruderInFrame) rawComedy += 38;
+    if (intruderInFrame) {
+      rawComedy +=
+        intruderKind === 'oodama' || intruderKind === 'beach_ball' ? 40 : 38;
+    }
+    if (waveCrashActive) rawComedy += 32;
+    if (kusudamaActive) rawComedy += 16;
     rawComedy += flyingHatCount * 26;
     rawComedy += sneezeCount * 28;
     rawComedy += lensBombCount * 26;
@@ -465,8 +498,11 @@ export class PhotoEvaluator {
       visibleShoulderRideCount,
       blinkingCount,
       visibleCount,
+      smilingCount,
       intruderInFrame,
       intruderKind,
+      waveCrashActive,
+      kusudamaActive,
       flyingHatCount,
       sneezeCount,
       lensBombCount,
@@ -489,6 +525,8 @@ export class PhotoEvaluator {
       comedyAward,
       intruderInFrame,
       intruderKind,
+      waveCrashActive,
+      kusudamaActive,
       flyingHatCount,
       sneezeCount,
       lensBombCount,
@@ -514,6 +552,8 @@ export class PhotoEvaluator {
       flyingHatCount,
       intruderInFrame,
       intruderKind,
+      waveCrashActive,
+      kusudamaActive,
       henGaoCount,
       sneezeCount,
       lensBombCount,
@@ -852,6 +892,7 @@ export class PhotoEvaluator {
   private computeScores(
     evaluated: EvaluatedNpc[],
     totalCount: number,
+    kusudamaActive = false,
   ): {
     totalScore: number;
     coverageScore: number;
@@ -1126,6 +1167,16 @@ export class PhotoEvaluator {
     if (allVisible && smilingVisibleCount >= totalCount - 1 && fallenCount === 0) {
       momentRaw += 1.8;
     }
+    // Kusudama confetti celebration bonus (+2 when catching the celebration cleanly)
+    if (
+      kusudamaActive &&
+      vipAllVisible &&
+      fallenCount === 0 &&
+      visibleCount >= Math.max(1, totalCount - 2) &&
+      smilingVisibleCount >= Math.ceil(totalCount * 0.55)
+    ) {
+      momentRaw += 2.0;
+    }
     momentRaw = clamp(momentRaw, 0, 10);
 
     // Round sub-scores and sum cleanly so breakdown ALWAYS matches totalScore
@@ -1244,14 +1295,35 @@ export class PhotoEvaluator {
     visibleShoulderRideCount: number,
     blinkingCount: number,
     visibleCount: number,
+    smilingCount: number,
     intruderInFrame: boolean,
-    intruderKind: 'dove' | 'deer' | null,
+    intruderKind: StageIntruderKind | null,
+    waveCrashActive: boolean,
+    kusudamaActive: boolean,
     flyingHatCount: number,
     sneezeCount: number,
     lensBombCount: number,
     henGaoCount: number,
   ): ComedyAward | null {
+    const totalCount = evaluated.length;
+
     // 0. High-comedy rare bakage captures (top priority!)
+    if (intruderInFrame && intruderKind === 'oodama') {
+      return {
+        id: 'oodama_strike',
+        badge: '🔴 人間ボウリング大玉賞',
+        reason: '暴走大玉が表彰台の前でド派手に人間ボウリング！',
+      };
+    }
+
+    if (intruderInFrame && intruderKind === 'beach_ball') {
+      return {
+        id: 'beach_ball_boing',
+        badge: '🏐 ボヨヨン直撃賞',
+        reason: '巨大ビーチボールが常夏の記念撮影にボヨヨン直撃！',
+      };
+    }
+
     if (intruderInFrame && intruderKind === 'deer') {
       return {
         id: 'nara_deer',
@@ -1265,6 +1337,27 @@ export class PhotoEvaluator {
         id: 'rogue_dove',
         badge: '🕊️ ハト主役賞',
         reason: '暴走ハトがカメラのど真ん中を華麗に強奪！',
+      };
+    }
+
+    if (waveCrashActive) {
+      return {
+        id: 'wave_wipeout',
+        badge: '🌊 大波ずぶ濡れ賞',
+        reason: '波打ち際で大波ざっぱーん直撃の瞬間を完璧キャッチ！',
+      };
+    }
+
+    if (
+      kusudamaActive &&
+      smilingCount >= Math.ceil(totalCount * 0.55) &&
+      visibleCount >= Math.max(1, totalCount - 3) &&
+      fallenCount <= 1
+    ) {
+      return {
+        id: 'kusudama_fever',
+        badge: '🎊 優勝パニック賞',
+        reason: 'くす玉パッカーン＆紙吹雪フィーバーを満面の笑顔で激写！',
       };
     }
 
@@ -1419,16 +1512,31 @@ export class PhotoEvaluator {
     blockerVictims: Map<string, Set<string>>,
     comedyAward: ComedyAward | null,
     intruderInFrame: boolean,
-    intruderKind: 'dove' | 'deer' | null,
+    intruderKind: StageIntruderKind | null,
+    waveCrashActive: boolean,
+    kusudamaActive: boolean,
     flyingHatCount: number,
     sneezeCount: number,
     lensBombCount: number,
     henGaoCount: number,
   ): { caption: string; subCaption: string } {
     const totalCount = evaluated.length;
-    const isWedding = stage.id === 'wedding';
 
     // 0. High-comedy rare bakage headline captures!
+    if (intruderInFrame && intruderKind === 'oodama') {
+      return {
+        caption: '🔴 大玉ストライク！！',
+        subCaption: '表彰台の前で人間ボウリングが開幕しました。',
+      };
+    }
+
+    if (intruderInFrame && intruderKind === 'beach_ball') {
+      return {
+        caption: '🏐 巨大ビーチボール直撃！',
+        subCaption: 'ボヨヨンと吹き飛ぶ常夏メモリー！',
+      };
+    }
+
     if (intruderInFrame && intruderKind === 'deer') {
       return {
         caption: '🦌 鹿がセンター奪取！',
@@ -1440,6 +1548,25 @@ export class PhotoEvaluator {
       return {
         caption: '🕊️ ハト、顔面ドアップ乱入！',
         subCaption: 'もはやハトの宣材写真。新郎新婦は背景です。',
+      };
+    }
+
+    if (waveCrashActive) {
+      return {
+        caption: '🌊 ざっぱーん！前列全滅！！',
+        subCaption: '波打ち際で撮影するからこうなる！',
+      };
+    }
+
+    if (
+      kusudamaActive &&
+      smilingCount >= Math.ceil(totalCount * 0.55) &&
+      visibleCount >= Math.max(1, totalCount - 3) &&
+      fallenCount <= 1
+    ) {
+      return {
+        caption: '🎊 くす玉パッカーン！優勝最高！！',
+        subCaption: '紙吹雪と笑顔が弾ける奇跡の優勝ショット！',
       };
     }
 
@@ -1492,15 +1619,28 @@ export class PhotoEvaluator {
           subCaption: 'みんなの笑顔も構図も完璧！一生語られるベストショット。',
         };
       }
-      return isWedding
-        ? {
+      switch (stage.id) {
+        case 'wedding':
+          return {
             caption: '一生モノの祝福スマイル！',
             subCaption: '新郎新婦もゲストも全員キラキラ！式場パンフレット確定レベル。',
-          }
-        : {
+          };
+        case 'school_trip':
+          return {
             caption: '卒業アルバム表紙、確定！',
             subCaption: '3年2組の全員が最高の笑顔！青春がぜんぶ詰まった神写真。',
           };
+        case 'sports_day':
+          return {
+            caption: '🏆 社内報の表紙、決定！！',
+            subCaption: '社長も社員も表彰台で全員満面の笑み！来年の採用パンフ確定！',
+          };
+        case 'tropical_beach':
+          return {
+            caption: '🌴 常夏ポスター級ベストショット！',
+            subCaption: 'エメラルドの海と最高の笑顔！旅行会社のポスターにそのまま採用！',
+          };
+      }
     }
 
     // 2. Domino disaster (2 fallen)
@@ -1576,15 +1716,28 @@ export class PhotoEvaluator {
           subCaption: '全員の顔がしっかり写った、あたたかいベストショット！',
         };
       }
-      return isWedding
-        ? {
+      switch (stage.id) {
+        case 'wedding':
+          return {
             caption: '祝福あふれるベスト集合写真！',
             subCaption: '全員の笑顔が華やか！ちょっとの微調整でS+も狙えそう。',
-          }
-        : {
+          };
+        case 'school_trip':
+          return {
             caption: 'みんな笑顔！ナイス・クラス写真！',
             subCaption: '元気いっぱいの一枚！ジャンプや「はいチーズ！」でさらに高得点へ。',
           };
+        case 'sports_day':
+          return {
+            caption: '熱血ベスト・チーム写真！',
+            subCaption: '表彰台も前列もバッチリ笑顔！くす玉やジャンプでS+を狙おう。',
+          };
+        case 'tropical_beach':
+          return {
+            caption: 'まぶしい常夏ベストショット！',
+            subCaption: '大波をかわして全員ナイススマイル！もう一押しでS+確定！',
+          };
+      }
     }
 
     // 9. Zoomed too far out
