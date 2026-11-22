@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { NpcRuntimeState, SimEvent, SimEventType, StageSpec } from '../types';
+import { applyExternalBalanceHit, triggerHatPop } from './PhysicsWorld';
 
 export const BEHAVIOR_CONFIG = {
   maxDt: 0.05,
@@ -9,11 +10,17 @@ export const BEHAVIOR_CONFIG = {
   referenceFov: 42,
   zoomBoostScale: 0.55,
 
-  // Showoff
-  showoffChargeAttention: 0.5,
+  // Showoff & Lens Photobomb
+  showoffChargeAttention: 0.44,
   showoffLoseSpotlightAttention: 0.28,
-  showoffTelegraphDuration: 0.85,
-  showoffChargeSpeed: 2.65,
+  showoffTelegraphDuration: 0.8,
+  showoffChargeSpeed: 2.75,
+  showoffLensBombChargeSpeed: 3.2,
+  showoffLensBombRate: 0.55,
+  showoffLensBombDecay: 0.65,
+  showoffLensBombMaxZOffset: 0.85,
+  showoffSlipAngularSpeed: 0.65,
+  showoffSlipMinProgress: 0.3,
   showoffDriftSpeed: 1.05,
 
   // Shy
@@ -51,14 +58,32 @@ export const BEHAVIOR_CONFIG = {
   helperRescueDistance: 0.85,
   helperStabilizeTime: 1.1,
 
-  // Blinker
+  // Blinker & Mega-Sneeze Shockwave
   blinkerSweepWakeSpeed: 0.55,
   blinkerWarnDuration: 0.9,
   blinkerClosedDuration: 1.1,
+  sneezeFirstDelayMin: 4.2,
+  sneezeFirstDelayMax: 6.0,
+  sneezeRepeatDelayMin: 9.0,
+  sneezeRepeatDelayMax: 12.0,
+  sneezeChargeDuration: 1.65,
+  sneezeBlastRadius: 2.2,
+  sneezeBlastSpeed: 3.8,
+  sneezePostHoldDuration: 0.9,
+
+  // Surprise Hen-Gao & Camera-Shake Dizziness
+  henGaoChance: 0.4,
+  henGaoDuration: 1.7,
+  cameraShakeDizzySpeed: 1.35,
 
   // Say Cheese global buff
   cheesePostSpikeThreshold: 0.45,
 } as const;
+
+interface SneezeScheduleState {
+  nextSneezeTimer: number;
+  activeSneezerId: string | null;
+}
 
 // Per-NPC internal perception/behavior timers (no mutation to shared NpcRuntimeState shape)
 const occludedTimerMap = new WeakMap<NpcRuntimeState, number>();
@@ -68,6 +93,17 @@ const jumperCheeseTriggeredMap = new WeakMap<NpcRuntimeState, boolean>();
 const postCheeseSpikedMap = new WeakMap<NpcRuntimeState, boolean>();
 const showoffBuildupMap = new WeakMap<NpcRuntimeState, number>();
 const hopCooldownMap = new WeakMap<NpcRuntimeState, number>();
+const lensBombEmittedMap = new WeakMap<NpcRuntimeState, boolean>();
+const henGaoTimerMap = new WeakMap<NpcRuntimeState, number>();
+const henGaoRolledMap = new WeakMap<NpcRuntimeState, boolean>();
+const sneezeHoldTimerMap = new WeakMap<NpcRuntimeState, number>();
+const dizzyShakeTimerMap = new WeakMap<NpcRuntimeState, number>();
+const slipFallTimerMap = new WeakMap<NpcRuntimeState, number>();
+const sneezeScheduleMap = new WeakMap<NpcRuntimeState[], SneezeScheduleState>();
+
+export function resetNpcBehaviorState(npcs: NpcRuntimeState[]): void {
+  sneezeScheduleMap.delete(npcs);
+}
 
 // Reusable scratch vectors to avoid per-frame allocations
 const _camPos = new THREE.Vector3();
@@ -81,6 +117,7 @@ const _otherTorso = new THREE.Vector3();
 const _toOther = new THREE.Vector3();
 const _closest = new THREE.Vector3();
 const _frontFocus = new THREE.Vector3();
+const _lensBombFocus = new THREE.Vector3();
 
 function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
@@ -151,6 +188,20 @@ function computeCameraVisualFrontPoint(stage: StageSpec): THREE.Vector3 {
   const clampedX = clamp(hitX, stage.stageBounds.minX + 0.7, stage.stageBounds.maxX - 0.7);
   const clampedZ = clamp(targetFrontZ, stage.stageBounds.minZ + 0.7, stage.stageBounds.maxZ - 0.55);
   return _frontFocus.set(clampedX, 0, clampedZ);
+}
+
+function computeLensBombTarget(
+  stage: StageSpec,
+  targetZ: number,
+  out: THREE.Vector3,
+): THREE.Vector3 {
+  const maxAllowedZ = stage.stageBounds.maxZ + BEHAVIOR_CONFIG.showoffLensBombMaxZOffset;
+  const clampedZ = clamp(targetZ, stage.stageBounds.minZ + 0.7, maxAllowedZ);
+  const dirZ = Math.abs(_camForward.z) > 0.08 ? _camForward.z : -1;
+  const t = clamp((clampedZ - _camPos.z) / dirZ, 1.0, 16);
+  const hitX = _camPos.x + _camForward.x * t;
+  const clampedX = clamp(hitX, stage.stageBounds.minX + 0.6, stage.stageBounds.maxX - 0.6);
+  return out.set(clampedX, 0, clampedZ);
 }
 
 function updatePerception(
@@ -345,12 +396,16 @@ function updateBodyLean(npc: NpcRuntimeState, dt: number): void {
     targetTiltZ = sign * 1.32;
   } else {
     fallRollSignMap.delete(npc);
-    if (npc.action === 'staggering') {
+    if (npc.sneezeCharge > 0) {
+      // Comedic dramatic inhale tilt-back & tremble right before ACHOO!!
+      targetTiltX = -0.32 * npc.sneezeCharge;
+      targetTiltZ = Math.sin(npc.walkPhase * 20) * 0.1 * npc.sneezeCharge;
+    } else if (npc.action === 'staggering') {
       targetTiltX = Math.sin(npc.walkPhase * 2.2) * 0.28;
       targetTiltZ = Math.cos(npc.walkPhase * 2.5) * 0.34;
     } else if (npc.action === 'shoving') {
-      targetTiltX = 0.22;
-      targetTiltZ = Math.sin(npc.walkPhase * 1.4) * 0.08;
+      targetTiltX = 0.22 + npc.lensBombProgress * 0.14;
+      targetTiltZ = Math.sin(npc.walkPhase * 1.4) * 0.09;
     } else if (npc.action === 'helping') {
       targetTiltX = 0.26;
       targetTiltZ = Math.sin(npc.walkPhase * 1.2) * 0.06;
@@ -365,6 +420,13 @@ function updateBodyLean(npc: NpcRuntimeState, dt: number): void {
       const progress = clamp(1 - npc.actionTimer / 0.75, 0, 1);
       targetTiltX = (1 - progress) * 0.55;
       targetTiltZ = (1 - progress) * 0.45;
+    }
+
+    const dizzyRemaining = dizzyShakeTimerMap.get(npc) ?? 0;
+    if (dizzyRemaining > 0 && npc.sneezeCharge <= 0) {
+      const wobbleAmp = Math.min(1, dizzyRemaining / 0.45);
+      targetTiltX += Math.sin(npc.walkPhase * 5.2 + npc.position.x) * 0.2 * wobbleAmp;
+      targetTiltZ += Math.cos(npc.walkPhase * 5.8 + npc.position.z) * 0.28 * wobbleAmp;
     }
   }
 
@@ -395,6 +457,75 @@ export function updateNpcBehaviors(
     npcById.set(npc.spec.id, npc);
   }
 
+  // === MEGA-SNEEZE SCHEDULER (blinker / grandpa) ===
+  let sneezeSchedule = sneezeScheduleMap.get(npcs);
+  if (!sneezeSchedule) {
+    sneezeSchedule = {
+      nextSneezeTimer:
+        BEHAVIOR_CONFIG.sneezeFirstDelayMin +
+        rng() * (BEHAVIOR_CONFIG.sneezeFirstDelayMax - BEHAVIOR_CONFIG.sneezeFirstDelayMin),
+      activeSneezerId: null,
+    };
+    sneezeScheduleMap.set(npcs, sneezeSchedule);
+  }
+
+  if (sneezeSchedule.activeSneezerId !== null) {
+    const active = npcById.get(sneezeSchedule.activeSneezerId);
+    if (
+      !active ||
+      active.sneezeCharge <= 0 ||
+      active.action === 'fallen' ||
+      active.action === 'staggering' ||
+      active.action === 'getting_up'
+    ) {
+      if (active && active.sneezeCharge > 0) {
+        active.sneezeCharge = 0;
+      }
+      sneezeSchedule.activeSneezerId = null;
+      sneezeSchedule.nextSneezeTimer =
+        BEHAVIOR_CONFIG.sneezeRepeatDelayMin +
+        rng() * (BEHAVIOR_CONFIG.sneezeRepeatDelayMax - BEHAVIOR_CONFIG.sneezeRepeatDelayMin);
+    }
+  } else {
+    sneezeSchedule.nextSneezeTimer -= safeDt;
+    if (sneezeSchedule.nextSneezeTimer <= 0) {
+      const candidates: NpcRuntimeState[] = [];
+      for (const candidate of npcs) {
+        if (candidate.spec.archetype !== 'blinker') continue;
+        if (
+          candidate.action === 'fallen' ||
+          candidate.action === 'staggering' ||
+          candidate.action === 'getting_up' ||
+          candidate.action === 'riding_shoulders'
+        ) {
+          continue;
+        }
+        if (candidate.cheeseBuffTimer > 0) continue;
+        if ((sneezeHoldTimerMap.get(candidate) ?? 0) > 0) continue;
+        candidates.push(candidate);
+      }
+
+      if (candidates.length === 0) {
+        sneezeSchedule.nextSneezeTimer = 1.0;
+      } else {
+        // Favor grandpa_blinker when present so players see the iconic grandpa mega-sneeze!
+        const grandpa = candidates.find((c) => c.spec.id.includes('grandpa'));
+        const chosen =
+          grandpa && (candidates.length === 1 || rng() < 0.65)
+            ? grandpa
+            : candidates[Math.floor(rng() * candidates.length)];
+
+        chosen.sneezeCharge = 0.01;
+        chosen.expression = 'sneeze';
+        chosen.reactionIcon = '🤧';
+        chosen.reactionTimer = 1.8;
+        chosen.poseIntensity = 0.25;
+        sneezeSchedule.activeSneezerId = chosen.spec.id;
+        emitEvent(chosen, events, 'sneeze_charge', 0.95);
+      }
+    }
+  }
+
   for (const npc of npcs) {
     // Decrement shared timers
     npc.reactionTimer = Math.max(0, npc.reactionTimer - safeDt);
@@ -404,6 +535,18 @@ export function updateNpcBehaviors(
     npc.cooldownTimer = Math.max(0, npc.cooldownTimer - safeDt);
     const prevHopCd = hopCooldownMap.get(npc) ?? 0;
     if (prevHopCd > 0) hopCooldownMap.set(npc, Math.max(0, prevHopCd - safeDt));
+
+    const prevHenGao = henGaoTimerMap.get(npc) ?? 0;
+    if (prevHenGao > 0) henGaoTimerMap.set(npc, Math.max(0, prevHenGao - safeDt));
+
+    const prevSneezeHold = sneezeHoldTimerMap.get(npc) ?? 0;
+    if (prevSneezeHold > 0) sneezeHoldTimerMap.set(npc, Math.max(0, prevSneezeHold - safeDt));
+
+    const prevDizzy = dizzyShakeTimerMap.get(npc) ?? 0;
+    if (prevDizzy > 0) dizzyShakeTimerMap.set(npc, Math.max(0, prevDizzy - safeDt));
+
+    const prevSlipTimer = slipFallTimerMap.get(npc) ?? 0;
+    if (prevSlipTimer > 0) slipFallTimerMap.set(npc, Math.max(0, prevSlipTimer - safeDt));
 
     const prevCheese = npc.cheeseBuffTimer;
     npc.cheeseBuffTimer = Math.max(0, npc.cheeseBuffTimer - safeDt);
@@ -423,18 +566,33 @@ export function updateNpcBehaviors(
       postCheeseSpikedMap.set(npc, true);
       if (npc.spec.archetype === 'showoff' && npc.action !== 'fallen' && npc.action !== 'staggering') {
         npc.excitement = clamp(npc.excitement + 0.65, 0, 1);
-        npc.reactionIcon = '💢';
-        npc.reactionTimer = 0.7;
+        if (rng() < BEHAVIOR_CONFIG.henGaoChance) {
+          henGaoTimerMap.set(npc, BEHAVIOR_CONFIG.henGaoDuration);
+          npc.expression = 'hen_gao';
+          npc.reactionIcon = '🤪';
+          npc.reactionTimer = BEHAVIOR_CONFIG.henGaoDuration;
+        } else {
+          npc.reactionIcon = '💢';
+          npc.reactionTimer = 0.7;
+        }
       } else if (npc.spec.archetype === 'jumper' && npc.action !== 'fallen' && npc.action !== 'staggering') {
         npc.excitement = clamp(npc.excitement + 0.55, 0, 1);
+        if (rng() < BEHAVIOR_CONFIG.henGaoChance) {
+          henGaoTimerMap.set(npc, BEHAVIOR_CONFIG.henGaoDuration);
+          npc.expression = 'hen_gao';
+          npc.reactionIcon = '🤪';
+          npc.reactionTimer = BEHAVIOR_CONFIG.henGaoDuration;
+        }
       }
     }
 
     // === GLOBAL OVERRIDE STATES ===
     if (npc.action === 'fallen') {
       npc.actionTimer -= safeDt;
-      npc.expression = 'dizzy';
-      npc.reactionIcon = '💫';
+      npc.sneezeCharge = 0;
+      const slipFlash = (slipFallTimerMap.get(npc) ?? 0) > 0;
+      npc.expression = slipFlash ? 'surprised' : 'dizzy';
+      npc.reactionIcon = slipFlash ? '!' : '💫';
       npc.reactionTimer = Math.max(npc.reactionTimer, 0.2);
       npc.poseIntensity = 0;
       if (npc.actionTimer <= 0) {
@@ -452,6 +610,7 @@ export function updateNpcBehaviors(
 
     if (npc.action === 'getting_up') {
       npc.actionTimer -= safeDt;
+      npc.lensBombProgress = Math.max(0, npc.lensBombProgress - safeDt * 1.2);
       npc.poseIntensity = 0;
       if (npc.actionTimer <= 0) {
         npc.action = 'idle';
@@ -467,6 +626,8 @@ export function updateNpcBehaviors(
 
     if (npc.action === 'staggering') {
       npc.actionTimer -= safeDt;
+      npc.sneezeCharge = 0;
+      npc.lensBombProgress = Math.max(0, npc.lensBombProgress - safeDt * 0.9);
       npc.expression = 'surprised';
       npc.poseIntensity = 0;
       if (npc.actionTimer <= 0) {
@@ -493,9 +654,16 @@ export function updateNpcBehaviors(
         npc.squashY = 1.24;
         npc.excitement = 0;
         npc.poseIntensity = 1.0;
-        npc.expression = 'cheese';
-        npc.reactionIcon = '✌';
-        npc.reactionTimer = 0.95;
+        if (rng() < BEHAVIOR_CONFIG.henGaoChance) {
+          henGaoTimerMap.set(npc, BEHAVIOR_CONFIG.henGaoDuration);
+          npc.expression = 'hen_gao';
+          npc.reactionIcon = '🤪';
+          npc.reactionTimer = BEHAVIOR_CONFIG.henGaoDuration;
+        } else {
+          npc.expression = 'cheese';
+          npc.reactionIcon = '✌';
+          npc.reactionTimer = 0.95;
+        }
         npc.cooldownTimer = BEHAVIOR_CONFIG.jumperCooldown;
         emitEvent(npc, events, 'jump', 1.0);
       }
@@ -506,8 +674,9 @@ export function updateNpcBehaviors(
 
     if (npc.action === 'jumping') {
       npc.actionTimer = Math.max(0, npc.actionTimer - safeDt);
-      npc.expression = 'cheese';
-      npc.reactionIcon = '✌';
+      const jumpHenGao = (henGaoTimerMap.get(npc) ?? 0) > 0;
+      npc.expression = jumpHenGao ? 'hen_gao' : 'cheese';
+      npc.reactionIcon = jumpHenGao ? '🤪' : '✌';
       npc.reactionTimer = Math.max(npc.reactionTimer, 0.25);
       npc.poseIntensity = 1.0;
       // Fallback if grounded without impact trigger
@@ -567,6 +736,96 @@ export function updateNpcBehaviors(
       }
     }
 
+    // === MEGA-SNEEZE CHARGE & SHOCKWAVE OVERRIDE ===
+    if (npc.sneezeCharge > 0) {
+      // Calling "はい、チーズ！" interrupts an incoming sneeze early!
+      if (npc.cheeseBuffTimer > 0) {
+        npc.sneezeCharge = 0;
+        npc.reactionIcon = '!';
+        npc.reactionTimer = Math.max(npc.reactionTimer, 0.9);
+      } else {
+        npc.sneezeCharge = clamp(
+          npc.sneezeCharge + safeDt / BEHAVIOR_CONFIG.sneezeChargeDuration,
+          0,
+          1,
+        );
+        npc.action = 'idle';
+        npc.expression = 'sneeze';
+        npc.reactionIcon = '🤧';
+        npc.reactionTimer = Math.max(npc.reactionTimer, 0.35);
+        npc.poseIntensity = 0.25;
+        npc.squashY = clamp(
+          1.0 + 0.13 * npc.sneezeCharge + Math.sin(npc.walkPhase * 16) * 0.035,
+          0.85,
+          1.22,
+        );
+
+        if (npc.sneezeCharge >= 1.0) {
+          // ACHOO!! MEGA-SNEEZE SHOCKWAVE BLAST!
+          npc.sneezeCharge = 0;
+          sneezeHoldTimerMap.set(npc, BEHAVIOR_CONFIG.sneezePostHoldDuration);
+          npc.expression = 'sneeze';
+          npc.reactionIcon = '🤧';
+          npc.reactionTimer = 1.05;
+          npc.squashY = 0.74;
+          npc.tiltX = 0.58;
+          npc.velocity.z -= 1.35;
+          triggerHatPop(npc, events, 5.2, true);
+          emitEvent(npc, events, 'sneeze_blast', 1.65);
+
+          const blastR = BEHAVIOR_CONFIG.sneezeBlastRadius;
+          for (const other of npcs) {
+            if (other === npc) continue;
+            if (other.action === 'riding_shoulders') continue;
+            const dx = other.position.x - npc.position.x;
+            const dz = other.position.z - npc.position.z;
+            const dist = Math.hypot(dx, dz);
+            if (dist > blastR) continue;
+
+            const dirX = dist > 1e-4 ? dx / dist : 0;
+            const dirZ = dist > 1e-4 ? dz / dist : -1;
+            let bx = dirX * 0.78;
+            let bz = dirZ * 0.78 - 0.35;
+            const bLen = Math.hypot(bx, bz);
+            if (bLen > 1e-4) {
+              bx /= bLen;
+              bz /= bLen;
+            } else {
+              bx = dirX;
+              bz = dirZ;
+            }
+
+            const falloff = clamp(1 - dist / blastR, 0.25, 1.0);
+            const blastVel = BEHAVIOR_CONFIG.sneezeBlastSpeed * (0.68 + 0.32 * falloff);
+            other.velocity.x += bx * blastVel;
+            other.velocity.z += bz * blastVel;
+            other.velocity.y = Math.max(other.velocity.y, 1.65 + 0.9 * falloff);
+
+            const balanceDrop = 0.55 + 0.4 * falloff;
+            applyExternalBalanceHit(other, balanceDrop, bx, bz, npcById, events, false);
+            triggerHatPop(other, events, 5.0 + falloff * 1.4, true);
+          }
+
+          sneezeSchedule.activeSneezerId = null;
+          sneezeSchedule.nextSneezeTimer =
+            BEHAVIOR_CONFIG.sneezeRepeatDelayMin +
+            rng() * (BEHAVIOR_CONFIG.sneezeRepeatDelayMax - BEHAVIOR_CONFIG.sneezeRepeatDelayMin);
+        }
+
+        updateHeadAndBodyOrientation(
+          npc,
+          safeDt,
+          _camPos.x,
+          _camPos.y,
+          _camPos.z,
+          0,
+          0.34 * npc.sneezeCharge,
+        );
+        updateBodyLean(npc, safeDt);
+        continue;
+      }
+    }
+
     // === ARCHETYPE BEHAVIORS ===
     let lookX = _camPos.x;
     let lookY = _camPos.y;
@@ -610,33 +869,112 @@ export function updateNpcBehaviors(
       case 'showoff': {
         let buildup = showoffBuildupMap.get(npc) ?? 0;
 
+        // SKILLFUL BAKAGE COUNTERPLAY: Whipping/shaking camera sideways while showoff is rushing the lens
+        // makes them lose footing, pop their hat, and slide face-first into a wipeout!
+        if (
+          npc.lensBombProgress > BEHAVIOR_CONFIG.showoffSlipMinProgress &&
+          cameraAngularSpeed > BEHAVIOR_CONFIG.showoffSlipAngularSpeed
+        ) {
+          const slideSide =
+            Math.abs(npc.velocity.x) > 0.15
+              ? Math.sign(npc.velocity.x)
+              : npc.spec.homePos.x >= 0
+                ? 1
+                : -1;
+          npc.action = 'fallen';
+          npc.actionTimer = 2.65;
+          slipFallTimerMap.set(npc, 0.48);
+          npc.balance = 0;
+          npc.lensBombProgress = 0;
+          lensBombEmittedMap.set(npc, false);
+          henGaoRolledMap.set(npc, false);
+          showoffBuildupMap.set(npc, 0);
+          npc.excitement = 0.15;
+          npc.expression = 'surprised';
+          npc.reactionIcon = '!';
+          npc.reactionTimer = 1.6;
+          npc.poseIntensity = 0;
+          npc.tiltX = 0.92;
+          npc.squashY = 0.82;
+          npc.velocity.x = npc.velocity.x * 0.75 + slideSide * 1.45;
+          npc.velocity.z = Math.max(npc.velocity.z * 0.85, 2.35);
+          npc.velocity.y = Math.max(npc.velocity.y, 1.55);
+          triggerHatPop(npc, events, 5.4, true);
+          emitEvent(npc, events, 'slip', 1.3);
+          break;
+        }
+
         // Tactical Say Cheese: only pauses a showoff who was already calmed/lured away,
         // NOT one actively surging in front of the lens!
-        if (npc.cheeseBuffTimer > 0.9 && npc.action !== 'shoving' && npc.excitement <= 0.65) {
+        if (
+          npc.cheeseBuffTimer > 0.9 &&
+          npc.action !== 'shoving' &&
+          npc.excitement <= 0.65 &&
+          npc.lensBombProgress < 0.3
+        ) {
           npc.action = 'posing';
           npc.expression = 'cheese';
           npc.poseIntensity = 1.0;
           break;
         }
 
-        const spotlightOn =
-          npc.cameraAttention > BEHAVIOR_CONFIG.showoffChargeAttention ||
-          npc.excitement > 0.78;
+        const directSpotlight = npc.cameraAttention > BEHAVIOR_CONFIG.showoffChargeAttention;
+        const spotlightOn = directSpotlight || npc.excitement > 0.78;
+
+        if (directSpotlight) {
+          const prevLens = npc.lensBombProgress;
+          npc.lensBombProgress = clamp(
+            npc.lensBombProgress + BEHAVIOR_CONFIG.showoffLensBombRate * safeDt,
+            0,
+            1,
+          );
+
+          // Roll surprise Hen-Gao when getting super hyped near the lens (> 0.55)
+          if (npc.lensBombProgress > 0.55 && !henGaoRolledMap.get(npc)) {
+            henGaoRolledMap.set(npc, true);
+            if (rng() < BEHAVIOR_CONFIG.henGaoChance) {
+              henGaoTimerMap.set(npc, BEHAVIOR_CONFIG.henGaoDuration);
+            }
+          }
+
+          // Emit 'lens_bomb' when crossing 0.7!
+          if (prevLens < 0.7 && npc.lensBombProgress >= 0.7 && !lensBombEmittedMap.get(npc)) {
+            lensBombEmittedMap.set(npc, true);
+            emitEvent(npc, events, 'lens_bomb', 1.3);
+          }
+        } else {
+          npc.lensBombProgress = clamp(
+            npc.lensBombProgress - BEHAVIOR_CONFIG.showoffLensBombDecay * safeDt,
+            0,
+            1,
+          );
+          if (npc.lensBombProgress < 0.3) {
+            lensBombEmittedMap.set(npc, false);
+            henGaoRolledMap.set(npc, false);
+          }
+        }
 
         if (spotlightOn) {
           npc.excitement = clamp(npc.excitement + 0.48 * safeDt, 0, 1);
           buildup = Math.min(BEHAVIOR_CONFIG.showoffTelegraphDuration, buildup + safeDt);
           showoffBuildupMap.set(npc, buildup);
 
+          // Advance charge target ALL THE WAY forward to stageBounds.maxZ + 0.85 right near the lens!
+          const bombBlend = smoothstep(0.12, 0.82, npc.lensBombProgress);
+          const maxBombZ = stage.stageBounds.maxZ + BEHAVIOR_CONFIG.showoffLensBombMaxZOffset;
+          const desiredZ = frontFocus.z + (maxBombZ - frontFocus.z) * bombBlend;
+          computeLensBombTarget(stage, desiredZ, _lensBombFocus);
+
           const distFocus = Math.hypot(
-            frontFocus.x - npc.position.x,
-            frontFocus.z - npc.position.z,
+            _lensBombFocus.x - npc.position.x,
+            _lensBombFocus.z - npc.position.z,
           );
 
-          // Clear 0.85s telegraph (★ -> 💢) before charging so players can read & lure!
+          // Clear telegraph (★ -> 💢) before charging so players can read & lure/whiff-slip!
           if (
             buildup < BEHAVIOR_CONFIG.showoffTelegraphDuration &&
             npc.action !== 'shoving' &&
+            npc.lensBombProgress < 0.25 &&
             distFocus > 0.45
           ) {
             npc.action = 'posing';
@@ -644,26 +982,30 @@ export function updateNpcBehaviors(
             npc.reactionIcon = buildup < 0.45 ? '★' : '💢';
             npc.reactionTimer = Math.max(npc.reactionTimer, 0.3);
             npc.poseIntensity = 0.75;
-          } else if (distFocus > 0.42) {
+          } else if (distFocus > 0.38) {
             npc.action = 'shoving';
+            const chargeSpeed =
+              npc.lensBombProgress > 0.3
+                ? BEHAVIOR_CONFIG.showoffLensBombChargeSpeed
+                : BEHAVIOR_CONFIG.showoffChargeSpeed;
             steerToward(
               npc,
-              frontFocus.x,
-              frontFocus.z,
-              BEHAVIOR_CONFIG.showoffChargeSpeed,
+              _lensBombFocus.x,
+              _lensBombFocus.z,
+              chargeSpeed,
               safeDt,
-              0.2,
+              0.18,
             );
             faceMove = true;
             npc.expression = 'smug';
-            npc.reactionIcon = '💢';
+            npc.reactionIcon = npc.lensBombProgress >= 0.7 ? '✌' : '💢';
             npc.reactionTimer = Math.max(npc.reactionTimer, 0.35);
-            npc.poseIntensity = 0.35;
+            npc.poseIntensity = npc.lensBombProgress >= 0.55 ? 0.9 : 0.4;
           } else {
             const wasShoving = npc.action === 'shoving';
             npc.action = 'posing';
             npc.expression = 'smug';
-            npc.reactionIcon = '★';
+            npc.reactionIcon = npc.lensBombProgress >= 0.5 ? '✌' : '★';
             npc.reactionTimer = Math.max(npc.reactionTimer, 0.45);
             npc.poseIntensity = 1.0;
             if (wasShoving && npc.cooldownTimer <= 0) {
@@ -695,7 +1037,7 @@ export function updateNpcBehaviors(
           npc.expression = 'neutral';
           npc.poseIntensity = 0.15;
         } else {
-          // Middle zone (0.28..0.50): strutting anticipation
+          // Middle zone (0.28..0.44): strutting anticipation
           buildup = Math.max(0, buildup - safeDt * 0.5);
           showoffBuildupMap.set(npc, buildup);
           npc.excitement = clamp(npc.excitement + 0.08 * safeDt, 0, 1);
@@ -1201,9 +1543,13 @@ export function updateNpcBehaviors(
     const shyOverwhelmed =
       npc.spec.archetype === 'shy' &&
       npc.cameraAttention >= BEHAVIOR_CONFIG.shyCheeseCalmAttentionMax;
+    const holdingSneezeFace = (sneezeHoldTimerMap.get(npc) ?? 0) > 0;
+    const activeHenGao = (henGaoTimerMap.get(npc) ?? 0) > 0;
+
     if (
       npc.cheeseBuffTimer > 0 &&
       !shyOverwhelmed &&
+      npc.action !== 'fallen' &&
       npc.action !== 'shoving' &&
       npc.action !== 'helping' &&
       npc.action !== 'hiding'
@@ -1213,10 +1559,38 @@ export function updateNpcBehaviors(
       lookZ = _camPos.z;
       headYawBias = 0;
       headPitchBias = 0;
-      if (npc.expression !== 'surprised') {
+      if (npc.expression !== 'surprised' && !holdingSneezeFace && !activeHenGao) {
         npc.expression = 'cheese';
       }
       npc.poseIntensity = Math.max(npc.poseIntensity, 0.85);
+    }
+
+    // === CAMERA-SHAKE DIZZINESS ===
+    if (
+      cameraAngularSpeed > BEHAVIOR_CONFIG.cameraShakeDizzySpeed &&
+      npc.action !== 'fallen' &&
+      npc.action !== 'shoving'
+    ) {
+      const curDizzy = dizzyShakeTimerMap.get(npc) ?? 0;
+      dizzyShakeTimerMap.set(npc, clamp(Math.max(curDizzy, 0.55) + safeDt * 0.45, 0, 0.95));
+      npc.balance = Math.max(0.46, npc.balance - 0.14 * safeDt);
+    }
+
+    // === COMEDY EXPRESSION OVERRIDES (sneeze hold > hen_gao > camera-shake dizzy) ===
+    if (holdingSneezeFace) {
+      npc.expression = 'sneeze';
+      npc.reactionIcon = '🤧';
+      npc.reactionTimer = Math.max(npc.reactionTimer, 0.25);
+    } else if (activeHenGao && npc.action !== 'hiding' && npc.action !== 'fallen') {
+      npc.expression = 'hen_gao';
+      npc.reactionIcon = '🤪';
+      npc.reactionTimer = Math.max(npc.reactionTimer, 0.25);
+      npc.poseIntensity = Math.max(npc.poseIntensity, 0.95);
+    } else if ((dizzyShakeTimerMap.get(npc) ?? 0) > 0 && npc.action !== 'hiding' && npc.action !== 'fallen') {
+      npc.expression = 'dizzy';
+      npc.reactionIcon = '💫';
+      npc.reactionTimer = Math.max(npc.reactionTimer, 0.25);
+      headYawBias += Math.sin(npc.walkPhase * 5.2 + npc.position.x) * 0.35;
     }
 
     updateHeadAndBodyOrientation(

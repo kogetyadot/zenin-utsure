@@ -980,6 +980,57 @@ input {
   color: #fff6d9;
 }
 
+/* Live Comic Intruder / Chaos Alert Banner (Takes Priority Over Quiet Tips) */
+.hud-chaos-alert {
+  max-width: min(460px, 92vw);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgba(138, 32, 12, 0.55);
+  background: linear-gradient(135deg, #ff544e 0%, #ff8636 54%, #ffbe3b 100%);
+  border: 2.5px solid #ffffff;
+  border-radius: 999px;
+  padding: 5px 16px;
+  box-shadow:
+    0 6px 18px rgba(226, 72, 34, 0.36),
+    0 3px 0 rgba(186, 54, 24, 0.72);
+}
+
+.hud-chaos-alert.is-pop {
+  animation:
+    chaosPopIn 280ms cubic-bezier(0.22, 1.45, 0.36, 1) both,
+    chaosWiggle 860ms 280ms ease-in-out infinite;
+}
+
+@keyframes chaosPopIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.66) rotate(-2deg);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(1px) scale(1.07) rotate(1deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(0deg);
+  }
+}
+
+@keyframes chaosWiggle {
+  0%,
+  100% {
+    transform: scale(1) rotate(-0.8deg);
+  }
+  50% {
+    transform: scale(1.045) rotate(0.8deg);
+  }
+}
+
 /* Top-Right Controls */
 .hud-btn-finish,
 .hud-btn-icon {
@@ -1414,7 +1465,14 @@ input {
   padding-top: 8px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+}
+
+.toast-score-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
 }
 
 .toast-score {
@@ -1422,6 +1480,24 @@ input {
   font-weight: 900;
   font-variant-numeric: tabular-nums;
   color: var(--coral-dark);
+  white-space: nowrap;
+}
+
+.toast-comedy-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: linear-gradient(135deg, #ff7a24 0%, #ffaa2b 100%);
+  color: #ffffff;
+  border: 1.5px solid #ffffff;
+  box-shadow: 0 2px 6px rgba(235, 112, 22, 0.3);
+  text-shadow: 0 1px 1px rgba(140, 48, 0, 0.3);
 }
 
 .toast-caption {
@@ -1466,12 +1542,15 @@ input {
 
 .cheese-wave-label {
   position: relative;
-  padding: 10px 24px;
+  max-width: 90vw;
+  white-space: nowrap;
+  text-align: center;
+  padding: 9px 22px;
   border-radius: 999px;
   background: linear-gradient(180deg, #ffda73 0%, var(--sun-gold) 100%);
   color: var(--ink);
   border: 3px solid #ffffff;
-  font-size: clamp(20px, 3.2vw, 28px);
+  font-size: clamp(16px, 3vw, 27px);
   font-weight: 900;
   box-shadow: 0 12px 28px rgba(154, 100, 12, 0.34);
   opacity: 0;
@@ -1817,6 +1896,21 @@ button.filmstrip-item.is-selected {
   border: 1px solid #ffffff;
 }
 
+.filmstrip-comedy-star {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  font-size: 8.5px;
+  font-weight: 900;
+  background: linear-gradient(135deg, #ff7a24 0%, #ffaa2b 100%);
+  color: #ffffff;
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid #ffffff;
+  box-shadow: 0 2px 5px rgba(226, 98, 22, 0.35);
+  text-shadow: 0 1px 1px rgba(140, 48, 0, 0.3);
+}
+
 .filmstrip-shot-num {
   position: absolute;
   right: 3px;
@@ -1909,6 +2003,7 @@ button.filmstrip-item.is-selected {
 }
 
 .score-hero-copy {
+  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -1917,9 +2012,18 @@ button.filmstrip-item.is-selected {
 
 .score-total-row {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-total-main {
+  display: inline-flex;
   align-items: baseline;
   gap: 5px;
-  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
 }
 
 .score-total-num {
@@ -1933,6 +2037,63 @@ button.filmstrip-item.is-selected {
   font-size: 13px;
   font-weight: 800;
   color: var(--ink-muted);
+}
+
+/* Vibrant Bakage Comedy Meter Pill beside Score Header */
+.comedy-meter-pill {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+  white-space: nowrap;
+  background: #fff2e0;
+  color: #a94f08;
+  border: 1.5px solid rgba(255, 152, 56, 0.48);
+  box-shadow: 0 2px 6px rgba(214, 128, 36, 0.12);
+}
+
+.comedy-meter-pill.is-mid {
+  background: linear-gradient(135deg, #fff0c2 0%, #ffd89b 100%);
+  color: #9c4500;
+  border-color: #ff9f2e;
+  box-shadow: 0 3px 9px rgba(245, 146, 28, 0.22);
+}
+
+.comedy-meter-pill.is-high {
+  background: linear-gradient(135deg, #ff8a24 0%, #ffba30 100%);
+  color: #ffffff;
+  border-color: #ffffff;
+  box-shadow: 0 4px 12px rgba(245, 126, 22, 0.34);
+  text-shadow: 0 1px 2px rgba(140, 48, 0, 0.28);
+}
+
+.comedy-meter-pill.is-rofl {
+  background: linear-gradient(135deg, #ff4d48 0%, #ff8528 56%, #ffbe3b 100%);
+  color: #ffffff;
+  border-color: #ffffff;
+  box-shadow: 0 4px 14px rgba(240, 74, 48, 0.38);
+  text-shadow: 0 1px 2px rgba(136, 24, 12, 0.34);
+}
+
+.comedy-meter-word {
+  font-size: 10px;
+  font-weight: 900;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #b54800;
+  text-shadow: none;
+}
+
+.comedy-meter-pill.is-high .comedy-meter-word,
+.comedy-meter-pill.is-rofl .comedy-meter-word {
+  background: rgba(255, 255, 255, 0.26);
+  color: #ffffff;
 }
 
 .result-caption {
@@ -2332,6 +2493,11 @@ button.filmstrip-item.is-selected {
     padding: 3px 10px;
   }
 
+  .hud-chaos-alert {
+    font-size: 11.5px;
+    padding: 4px 12px;
+  }
+
   .timer-pill {
     padding: 3px 9px 3px 4px;
   }
@@ -2444,6 +2610,15 @@ button.filmstrip-item.is-selected {
     padding: 7px 7px 10px;
   }
 
+  .toast-score {
+    font-size: 13.5px;
+  }
+
+  .toast-comedy-badge {
+    font-size: 9.5px;
+    padding: 1.5px 5.5px;
+  }
+
   /* Result mobile layout */
   .screen-result {
     padding: max(12px, env(safe-area-inset-top)) 12px max(18px, env(safe-area-inset-bottom));
@@ -2472,8 +2647,18 @@ button.filmstrip-item.is-selected {
     font-size: 24px;
   }
 
+  .score-total-row {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
   .score-total-num {
     font-size: 28px;
+  }
+
+  .comedy-meter-pill {
+    font-size: 10.5px;
+    padding: 2.5px 8px;
   }
 
   .album-actions {
@@ -2496,7 +2681,7 @@ button.filmstrip-item.is-selected {
     max-height: calc(100vh - 96px);
   }
 
-  .hud-tip-row {
+  .hud-tip-pill {
     display: none;
   }
 

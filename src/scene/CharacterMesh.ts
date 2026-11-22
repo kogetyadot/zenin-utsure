@@ -134,6 +134,16 @@ function createReactionIconTexture(icon: ReactionIcon): THREE.CanvasTexture {
         borderStroke = '#ff4d8d';
         textColor = '#f43f5e';
         break;
+      case '🤧':
+        bgFill = '#e6f9ff';
+        borderStroke = '#38bdf8';
+        textColor = '#0284c7';
+        break;
+      case '🤪':
+        bgFill = '#fff3d6';
+        borderStroke = '#ff6b9d';
+        textColor = '#e11d48';
+        break;
     }
 
     // Soft drop shadow
@@ -164,11 +174,127 @@ function createReactionIconTexture(icon: ReactionIcon): THREE.CanvasTexture {
     ctx.arc(cx, cy, 40, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Draw bold icon symbol
+    // Draw bold icon symbol (custom crisp vector art for 🤧 and 🤪)
     ctx.fillStyle = textColor;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    if (icon === '!' || icon === '?') {
+    if (icon === '🤧') {
+      // Comic sneeze puff face: yellow round chibi face + > < eyes + burst tissue cloud!
+      ctx.save();
+      ctx.translate(cx, cy + 1);
+
+      // Cute warm yellow face disc
+      ctx.fillStyle = '#ffe066';
+      ctx.strokeStyle = '#d97706';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(-4, -2, 23, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Pink flushed cheeks
+      ctx.fillStyle = 'rgba(255, 92, 138, 0.65)';
+      ctx.beginPath();
+      ctx.ellipse(-16, 4, 5.5, 3.6, 0, 0, Math.PI * 2);
+      ctx.ellipse(8, 4, 5.5, 3.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Tightly scrunched > < eyes
+      ctx.strokeStyle = '#291a16';
+      ctx.lineWidth = 3.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-16, -10);
+      ctx.lineTo(-8, -5);
+      ctx.lineTo(-16, 0);
+      ctx.moveTo(8, -10);
+      ctx.lineTo(0, -5);
+      ctx.lineTo(8, 0);
+      ctx.stroke();
+
+      // Crisp white tissue + puff cloud bursting lower-right
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.moveTo(-4, 7);
+      ctx.quadraticCurveTo(10, 2, 22, 10);
+      ctx.quadraticCurveTo(26, 20, 14, 24);
+      ctx.quadraticCurveTo(2, 26, -6, 16);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Little comic gust lines
+      ctx.strokeStyle = '#0284c7';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(18, -8);
+      ctx.lineTo(27, -14);
+      ctx.moveTo(21, 0);
+      ctx.lineTo(30, -1);
+      ctx.stroke();
+      ctx.restore();
+    } else if (icon === '🤪') {
+      // Zany goofy hen_gao badge: tilted smiley with mismatched eyes & pink sideways tongue!
+      ctx.save();
+      ctx.translate(cx, cy + 1);
+      ctx.rotate(-0.14);
+
+      // Vibrant yellow head
+      ctx.fillStyle = '#ffd93d';
+      ctx.strokeStyle = '#d97706';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, -1, 24, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Mismatched white eyes (left BIG, right small)
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#241816';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.arc(-9.5, -7, 8.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(10, -5.5, 5.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Wild cross-eyed mismatched pupils
+      ctx.fillStyle = '#1f1412';
+      ctx.beginPath();
+      ctx.arc(-6.2, -9.2, 3.8, 0, Math.PI * 2);
+      ctx.arc(12.2, -3.6, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Open cheeky mouth
+      ctx.fillStyle = '#9f1239';
+      ctx.strokeStyle = '#241816';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.arc(0, 5.5, 11.5, 0.05, Math.PI - 0.05);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Bright pink tongue sticking out sideways!
+      ctx.fillStyle = '#ff5d9e';
+      ctx.strokeStyle = '#701a3c';
+      ctx.lineWidth = 2.3;
+      ctx.beginPath();
+      ctx.moveTo(1, 9);
+      ctx.bezierCurveTo(10, 7, 18, 12, 17, 21);
+      ctx.bezierCurveTo(15, 28, 5, 29, 1, 22);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    } else if (icon === '!' || icon === '?') {
       ctx.font = '900 58px "Hiragino Maru Gothic ProN", "Rounded Mplus 1c", system-ui, sans-serif';
       ctx.fillText(icon, cx, cy + 3);
     } else if (icon === '★') {
@@ -270,6 +396,7 @@ export class CharacterMesh {
   private readonly tmpHeadQuat = new THREE.Quaternion();
   private readonly leftPeaceSign: THREE.Group;
   private readonly rightPeaceSign: THREE.Group;
+  private readonly hatPivot: THREE.Group;
 
   private sunglassesGroup: THREE.Group | null = null;
   private ponytailPivot: THREE.Group | null = null;
@@ -430,6 +557,13 @@ export class CharacterMesh {
       ear.castShadow = true;
       this.headPivot.add(ear);
     }
+
+    // Dedicated flying headwear pivot anchored at crown height on headPivot
+    const hatAnchor = new THREE.Group();
+    hatAnchor.position.y = headCenterY + this.headRadius * 0.82;
+    this.headPivot.add(hatAnchor);
+    this.hatPivot = new THREE.Group();
+    hatAnchor.add(this.hatPivot);
 
     // Hair & Head Accessories
     this.buildHair(headCenterY, hairMat, accentMat);
@@ -1134,6 +1268,12 @@ export class CharacterMesh {
     accGroup.position.y = headCenterY;
     this.headPivot.add(accGroup);
 
+    // Wearable headwear mounts inside hatPivot (offset back to headCenterY so resting pose is exact
+    // while midair tumble spins cleanly around the hat crown!)
+    const hatContent = new THREE.Group();
+    hatContent.position.y = -r * 0.82;
+    this.hatPivot.add(hatContent);
+
     switch (acc) {
       case 'veil': {
         // Delicate bridal tiara/comb + translucent gauzy trailing veil
@@ -1142,17 +1282,17 @@ export class CharacterMesh {
         const tiara = new THREE.Mesh(tiaraGeo, tiaraMat);
         tiara.position.set(0, r * 0.92, r * 0.16);
         tiara.rotation.x = -0.35;
-        accGroup.add(tiara);
+        hatContent.add(tiara);
 
         // Sparkling pearl center gem
         const gemGeo = this.trackGeo(new THREE.OctahedronGeometry(r * 0.095, 0));
         const gem = new THREE.Mesh(gemGeo, whiteMat);
         gem.position.set(0, r * 1.24, r * 0.35);
-        accGroup.add(gem);
+        hatContent.add(gem);
 
         const veilPivot = new THREE.Group();
         veilPivot.position.set(0, r * 0.88, -r * 0.36);
-        accGroup.add(veilPivot);
+        hatContent.add(veilPivot);
         this.veilPivot = veilPivot;
 
         const veilMat = this.trackMat(
@@ -1180,7 +1320,7 @@ export class CharacterMesh {
         const hatGroup = new THREE.Group();
         hatGroup.position.set(0, r * 0.96, -r * 0.02);
         hatGroup.rotation.x = -0.08;
-        accGroup.add(hatGroup);
+        hatContent.add(hatGroup);
 
         const brimGeo = this.trackGeo(new THREE.CylinderGeometry(r * 1.15, r * 1.15, 0.025, 22));
         const brim = new THREE.Mesh(brimGeo, hatMat);
@@ -1276,7 +1416,7 @@ export class CharacterMesh {
         beretGroup.position.set(r * 0.16, r * 0.96, -r * 0.05);
         beretGroup.rotation.z = -0.28;
         beretGroup.rotation.x = -0.14;
-        accGroup.add(beretGroup);
+        hatContent.add(beretGroup);
 
         const puffGeo = this.trackGeo(new THREE.SphereGeometry(r * 0.88, 18, 12));
         const puff = new THREE.Mesh(puffGeo, beretMat);
@@ -1319,7 +1459,7 @@ export class CharacterMesh {
         const crownGroup = new THREE.Group();
         crownGroup.position.set(0, r * 0.82, 0);
         crownGroup.rotation.x = -0.18;
-        accGroup.add(crownGroup);
+        hatContent.add(crownGroup);
 
         const vineMat = this.makeToyMat('#58b368', 0.65);
         const vineGeo = this.trackGeo(new THREE.TorusGeometry(r * 0.82, 0.02, 8, 22));
@@ -1352,7 +1492,7 @@ export class CharacterMesh {
         capGroup.position.set(0, r * 0.42, -r * 0.04);
         // Tilted playfully back slightly so the visor NEVER hides the eyes!
         capGroup.rotation.x = -0.32;
-        accGroup.add(capGroup);
+        hatContent.add(capGroup);
 
         const domeGeo = this.trackGeo(
           new THREE.SphereGeometry(r * 1.07, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.48),
@@ -1649,39 +1789,56 @@ export class CharacterMesh {
       }
 
       case 'posing': {
-        const p = Math.max(0.45, state.poseIntensity);
-        targetBodyY = Math.sin(t * 4.5) * 0.02;
+        const p = Math.max(0.5, state.poseIntensity);
+        targetBodyY = Math.sin(t * 5.2) * 0.026;
         if (this.poseVariant === 0 || this.holdsRightProp) {
-          // Right hand high victory / flag raise, left peace sign near cheek
+          // Dramatic bakage lean-back + high victory / flag raise + cheek peace sign!
+          targetFallX = -0.26 * p;
+          targetFallZ = Math.sin(t * 4.2) * 0.08;
           if (this.spec.appearance.accessory === 'flag') {
-            targetRArmX = -1.25 - 0.18 * p + Math.sin(t * 5) * 0.08;
-            targetRArmZ = 0.28;
+            targetRArmX = -1.32 - 0.18 * p + Math.sin(t * 5.5) * 0.1;
+            targetRArmZ = 0.3;
           } else {
-            targetRArmX = -2.45 * p;
-            targetRArmZ = -0.42;
+            targetRArmX = -2.62 * p;
+            targetRArmZ = -0.52;
           }
-          targetLArmX = -1.85 * p;
-          targetLArmZ = 0.35;
+          targetLArmX = -1.95 * p;
+          targetLArmZ = 0.38;
+          targetLLegX = -0.18;
+          targetRLegX = 0.22;
+          targetLLegZ = -0.1;
+          targetRLegZ = 0.1;
           showLeftPeace = true;
           showRightPeace = !this.holdsRightProp;
         } else if (this.poseVariant === 1) {
-          // Double cheerful peace signs!
-          targetLArmX = -2.15 * p;
-          targetRArmX = -2.15 * p;
-          targetLArmZ = 0.52;
-          targetRArmZ = -0.52;
+          // Lopsided wobbly flamingo pose on one leg + double wild peace signs!
+          targetBodyY = 0.045 + Math.sin(t * 7.5) * 0.02;
+          targetFallZ = 0.15 + Math.sin(t * 7.5) * 0.14;
+          targetFallX = -0.12 * p;
+          targetLArmX = -2.28 * p + Math.sin(t * 8) * 0.14;
+          targetRArmX = -2.28 * p - Math.sin(t * 8) * 0.14;
+          targetLArmZ = 0.62;
+          targetRArmZ = -0.62;
+          // Flamingo leg kicked up & bent jauntily!
+          targetLLegX = 0.06;
+          targetLLegZ = -0.06;
+          targetRLegX = -1.16 + Math.sin(t * 6.5) * 0.12;
+          targetRLegZ = 0.36;
           showLeftPeace = true;
           showRightPeace = true;
         } else {
-          // Classic photo hip-pop + high peace wave
+          // Exaggerated dramatic side-lean hip-pop + wild high peace wave!
+          targetFallX = -0.2 * p;
+          targetFallZ = -0.22 * p + Math.sin(t * 5.5) * 0.07;
           targetLArmX = -0.45;
-          targetLArmZ = -0.54;
-          targetRArmX = -2.55 * p;
-          targetRArmZ = -0.48 + Math.sin(t * 7) * 0.12;
+          targetLArmZ = -0.62;
+          targetRArmX = -2.68 * p;
+          targetRArmZ = -0.54 + Math.sin(t * 8.5) * 0.18;
+          targetLLegX = -0.24;
+          targetLLegZ = -0.18;
+          targetRLegZ = 0.12;
           showRightPeace = true;
         }
-        targetLLegZ = -0.08;
-        targetRLegZ = 0.08;
         break;
       }
 
@@ -1761,8 +1918,8 @@ export class CharacterMesh {
       }
 
       case 'carrying_rider': {
-        // Sturdy stance, both hands raised supporting rider's legs
-        targetBodyY = -0.03 + Math.sin(t * 4) * 0.012;
+        // Sturdy stance, both hands raised supporting rider's legs with subtle nervous strain
+        targetBodyY = -0.03 + Math.sin(t * 9.5) * 0.015;
         targetLArmX = -2.35;
         targetRArmX = -2.35;
         targetLArmZ = 0.26;
@@ -1771,6 +1928,56 @@ export class CharacterMesh {
         targetRLegZ = 0.16;
         break;
       }
+    }
+
+    // Extra bakage flair when pulling a wild アッカンベー hen_gao face!
+    let extraHeadRollZ = 0;
+    let extraHeadPitchX = 0;
+    const isUpright = action !== 'fallen' && action !== 'staggering';
+
+    if (state.expression === 'hen_gao' && isUpright) {
+      const sideSign = this.poseVariant === 1 ? -1 : 1;
+      extraHeadRollZ += sideSign * 0.28 + Math.sin(t * 7.5) * 0.14;
+      extraHeadPitchX -= 0.08;
+      if (action === 'idle' || action === 'moving') {
+        // Lopsided goofy lean + cheeky flamingo kick / jazz hands even outside posing!
+        targetFallZ += sideSign * 0.16 + Math.sin(t * 6.8) * 0.09;
+        targetFallX -= 0.14;
+        if (action === 'idle') {
+          targetRLegX = -0.92;
+          targetRLegZ = 0.3;
+          targetLArmX = -2.2;
+          targetLArmZ = 0.55;
+          showLeftPeace = true;
+        }
+      }
+    } else if (action === 'posing') {
+      // Playful crooked head tilt during wild bakage poses
+      extraHeadRollZ += (this.poseVariant === 1 ? -0.22 : 0.2) + Math.sin(t * 5.2) * 0.08;
+    }
+
+    // Lens-bombing photobomber pose: dramatic lean forward + double V peace hands right beside face!
+    if (state.lensBombProgress > 0.35 && isUpright) {
+      const bombAmt = THREE.MathUtils.clamp((state.lensBombProgress - 0.35) / 0.65, 0, 1);
+      const wiggle = Math.sin(t * 14) * 0.14;
+      targetFallX = 0.24 + 0.24 * bombAmt;
+      targetLArmX = -2.18 + wiggle;
+      targetRArmX = -2.18 - wiggle;
+      targetLArmZ = 0.32;
+      targetRArmZ = -0.32;
+      showLeftPeace = true;
+      showRightPeace = true;
+      // Tilt head up slightly so giant smug/hen_gao face stares straight into the camera lens
+      extraHeadPitchX -= 0.16 + 0.14 * bombAmt;
+    }
+
+    // Pre-sneeze inhale arm tension
+    const sneezeCharge = Math.max(0, state.sneezeCharge || 0);
+    if (sneezeCharge > 0 && isUpright) {
+      targetLArmX = THREE.MathUtils.lerp(targetLArmX, -0.75, sneezeCharge * 0.7);
+      targetRArmX = THREE.MathUtils.lerp(targetRArmX, -0.75, sneezeCharge * 0.7);
+      targetLArmZ = THREE.MathUtils.lerp(targetLArmZ, -0.42, sneezeCharge * 0.7);
+      targetRArmZ = THREE.MathUtils.lerp(targetRArmZ, 0.42, sneezeCharge * 0.7);
     }
 
     // Extra peace sign boost when beaming "cheese" with high poseIntensity
@@ -1802,12 +2009,20 @@ export class CharacterMesh {
     this.animRLegX = damp(this.animRLegX, targetRLegX, speed, dt);
     this.animRLegZ = damp(this.animRLegZ, targetRLegZ, speed, dt);
 
-    // Apply volume-preserving squash & stretch
-    const sqY = THREE.MathUtils.clamp(state.squashY || 1, 0.62, 1.45);
-    const invSq = 1 / Math.sqrt(sqY);
+    // Pre-sneeze rapid vibration & chest swell + Jenga-tower carrying wobble
+    const sneezeVib = sneezeCharge > 0 ? Math.sin(elapsedTime * 52) * 0.05 * sneezeCharge : 0;
+    const jengaTiltZ = action === 'carrying_rider' ? Math.sin(elapsedTime * 9.5) * 0.11 : 0;
+
+    // Apply volume-preserving squash & stretch (with pre-sneeze inhale puff swell!)
+    const sqY = THREE.MathUtils.clamp((state.squashY || 1) + sneezeCharge * 0.13, 0.62, 1.5);
+    const invSq = (1 / Math.sqrt(sqY)) * (1 + sneezeCharge * 0.09);
     this.bodyPivot.scale.set(invSq, sqY, invSq);
-    this.bodyPivot.position.y = this.animBodyY;
-    this.bodyPivot.rotation.set(state.tiltX + this.animFallX, 0, state.tiltZ + this.animFallZ);
+    this.bodyPivot.position.set(sneezeVib, this.animBodyY, 0);
+    this.bodyPivot.rotation.set(
+      state.tiltX + this.animFallX,
+      0,
+      state.tiltZ + this.animFallZ + jengaTiltZ,
+    );
 
     // Apply limbs
     this.leftArmPivot.rotation.set(this.animLArmX, 0, this.animLArmZ);
@@ -1818,9 +2033,30 @@ export class CharacterMesh {
     this.leftPeaceSign.visible = showLeftPeace;
     this.rightPeaceSign.visible = showRightPeace;
 
-    // Head yaw & pitch toward camera / point of interest
+    // Head yaw, pitch & roll toward camera / point of interest
     // Negate headPitchOffset so positive pitch tilts +Z headForward UP toward high-angle cameras!
-    this.headPivot.rotation.set(-state.headPitchOffset, state.headYawOffset, 0);
+    // Pre-sneeze tilts head dramatically UP/backward (-0.38 * sneezeCharge) with rapid tremble!
+    const sneezeHeadPitch = sneezeCharge > 0 ? -0.38 * sneezeCharge : 0;
+    const sneezeHeadYaw = sneezeCharge > 0 ? Math.cos(elapsedTime * 61) * 0.04 * sneezeCharge : 0;
+    const sneezeHeadRoll = sneezeVib * 1.4;
+    this.headPivot.rotation.set(
+      -state.headPitchOffset + extraHeadPitchX + sneezeHeadPitch,
+      state.headYawOffset + sneezeHeadYaw,
+      extraHeadRollZ + sneezeHeadRoll,
+    );
+
+    // Flying Hat / Headwear Physics (pop sky-high & tumble-spin on impact!)
+    if (state.hatPopHeight > 0.001) {
+      this.hatPivot.position.set(0, state.hatPopHeight, 0);
+      this.hatPivot.rotation.set(
+        state.hatSpin * 0.65,
+        state.hatSpin,
+        state.hatSpin * 0.45,
+      );
+    } else {
+      this.hatPivot.position.set(0, 0, 0);
+      this.hatPivot.rotation.set(0, 0, 0);
+    }
 
     // Secondary motion: ponytail, veil, tour flag, sunglasses surprise/cheese pop!
     if (this.ponytailPivot) {
@@ -1837,6 +2073,7 @@ export class CharacterMesh {
     if (this.sunglassesGroup) {
       const wantRaise =
         state.expression === 'surprised' ||
+        state.expression === 'hen_gao' ||
         state.action === 'staggering' ||
         state.action === 'fallen'
           ? 1

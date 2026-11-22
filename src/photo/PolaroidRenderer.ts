@@ -341,6 +341,7 @@ function drawRankStamp(
 function drawComedySticker(
   ctx: CanvasRenderingContext2D,
   badge: string,
+  hasComedyScoreBadge: boolean,
 ): void {
   ctx.save();
   const anchorX = PHOTO_X + 18;
@@ -351,7 +352,8 @@ function drawComedySticker(
   ctx.font = `800 22px ${FONT_SANS}`;
   const textWidth = ctx.measureText(badge).width;
   const padX = 22;
-  const pillW = Math.min(PHOTO_W - 60, textWidth + padX * 2);
+  const maxW = hasComedyScoreBadge ? PHOTO_W - 255 : PHOTO_W - 60;
+  const pillW = Math.min(maxW, textWidth + padX * 2);
   const pillH = 44;
 
   // Sticker drop shadow
@@ -388,6 +390,72 @@ function drawComedySticker(
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillText(badge, padX, -pillH * 0.5 + 9, pillW - padX * 2);
+
+  ctx.restore();
+}
+
+function drawComedyScoreBadge(
+  ctx: CanvasRenderingContext2D,
+  comedyScore: number,
+): void {
+  ctx.save();
+  const anchorX = PHOTO_X + PHOTO_W - 18;
+  const anchorY = PHOTO_Y + PHOTO_H - 18;
+  ctx.translate(anchorX, anchorY);
+  ctx.rotate((4.2 * Math.PI) / 180);
+
+  const label = `🤣 爆笑度 ${comedyScore}%`;
+  ctx.font = `900 21px ${FONT_SANS}`;
+  const textWidth = ctx.measureText(label).width;
+  const padX = 18;
+  const pillW = Math.min(230, textWidth + padX * 2);
+  const pillH = 44;
+
+  // Sticker drop shadow
+  ctx.shadowColor = 'rgba(28, 14, 4, 0.34)';
+  ctx.shadowBlur = 11;
+  ctx.shadowOffsetX = -1;
+  ctx.shadowOffsetY = 4;
+
+  // White die-cut vinyl sticker border
+  drawRoundedRectPath(ctx, -pillW - 4, -pillH + 4, pillW + 8, pillH + 8, 25);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+
+  ctx.shadowColor = 'transparent';
+
+  // Punchy golden-orange sticker gradient (extra fiery at 70%+)
+  const grad = ctx.createLinearGradient(-pillW, -pillH + 8, 0, 8);
+  if (comedyScore >= 70) {
+    grad.addColorStop(0, '#ffb703');
+    grad.addColorStop(0.55, '#fb8500');
+    grad.addColorStop(1, '#e85d04');
+  } else {
+    grad.addColorStop(0, '#ffd166');
+    grad.addColorStop(0.55, '#ff9f1c');
+    grad.addColorStop(1, '#f77f00');
+  }
+  drawRoundedRectPath(ctx, -pillW, -pillH + 8, pillW, pillH, 21);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Inner warm cream dashed accent
+  drawRoundedRectPath(ctx, -pillW + 4, -pillH + 12, pillW - 8, pillH - 8, 17);
+  ctx.strokeStyle = 'rgba(255, 252, 235, 0.52)';
+  ctx.lineWidth = 1.6;
+  ctx.setLineDash([4, 3]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // High-contrast crisp text with subtle dark warm shadow
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(92, 28, 0, 0.45)';
+  ctx.shadowBlur = 3;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 1.5;
+  ctx.fillStyle = '#fffdf8';
+  ctx.fillText(label, -pillW * 0.5, -pillH * 0.5 + 9, pillW - padX * 1.6);
 
   ctx.restore();
 }
@@ -464,15 +532,16 @@ function drawCaptionAndFooter(
     ctx.fillText(subLines[i], centerX, subStartY + i * 32, maxTextW);
   }
 
-  // Compact memory stat summary (19px bold, clear contrast)
+  // Compact memory stat summary (18px bold, clear contrast)
   const statItems = [
     `写り ${score.visibleCount}/${score.totalCount}`,
     `笑顔 ${score.smilingCount}人`,
     `構図 ${score.compositionScore}/20`,
     `瞬間 ${score.momentScore}/10`,
+    `爆笑 ${score.comedyScore}%`,
   ];
-  const statsLine = statItems.join('  •  ');
-  ctx.font = `700 19px ${FONT_SANS}`;
+  const statsLine = statItems.join(' • ');
+  ctx.font = `700 18px ${FONT_SANS}`;
   ctx.fillStyle = '#5f4f41';
   ctx.fillText(statsLine, centerX, 752, maxTextW);
 
@@ -537,9 +606,13 @@ export async function renderPolaroid(
   // 3. Angled rubber-stamp Rank Seal + numeric score
   drawRankStamp(ctx, score.rank, score.totalScore);
 
-  // 4. Optional tilted Comedy Award sticker ribbon
+  // 4. Optional tilted Comedy Award sticker ribbon (bottom-left) & Bakage Meter badge (bottom-right)
+  const showComedyBadge = score.comedyScore >= 35;
   if (score.comedyAward) {
-    drawComedySticker(ctx, score.comedyAward.badge);
+    drawComedySticker(ctx, score.comedyAward.badge, showComedyBadge);
+  }
+  if (showComedyBadge) {
+    drawComedyScoreBadge(ctx, score.comedyScore);
   }
 
   // 5. Handwritten Japanese caption, commentary & metadata footer

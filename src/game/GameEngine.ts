@@ -213,7 +213,12 @@ export class GameEngine {
       mesh.syncHeadTransformToState(npc);
     }
 
-    this.liveMetrics = this.evaluator.evaluateLive(this.simulator.npcs, this.camera);
+    this.builtStage.syncIntruder(this.simulator.intruder, 0.016, this.elapsedTime);
+    this.liveMetrics = this.evaluator.evaluateLive(
+      this.simulator.npcs,
+      this.camera,
+      this.simulator.intruder,
+    );
   }
 
   public startStage(stageId: StageId): void {
@@ -346,9 +351,18 @@ export class GameEngine {
       }
     }
 
+    if (this.builtStage) {
+      this.builtStage.syncIntruder(this.simulator.intruder, 0.001, this.elapsedTime);
+    }
+
     // Evaluate exact 3D score against the 4:3 print frustum
     const photoCam = this.syncPhotoEvalCamera();
-    const score = this.evaluator.evaluatePhoto(this.simulator.npcs, photoCam, this.currentStage);
+    const score = this.evaluator.evaluatePhoto(
+      this.simulator.npcs,
+      photoCam,
+      this.currentStage,
+      this.simulator.intruder,
+    );
 
     // Hide all 2D reaction bubbles, render crisp frame, grab directly from WebGL canvas
     for (const mesh of this.characterMeshes.values()) {
@@ -511,19 +525,31 @@ export class GameEngine {
         }
       }
 
+      if (this.builtStage) {
+        this.builtStage.syncIntruder(this.simulator.intruder, dt, this.elapsedTime);
+      }
+
       if (this.phase === 'playing') {
         for (const ev of events) {
           this.sound.playSimEvent(ev);
-          if (
-            this.builtStage &&
-            (ev.type === 'fall' || ev.type === 'pileup' || ev.type === 'shove' || ev.type === 'jump')
-          ) {
-            const puffCount = ev.type === 'pileup' ? 10 : ev.type === 'fall' ? 8 : 5;
-            this.builtStage.spawnDustPuff(ev.position, puffCount);
+          if (this.builtStage) {
+            if (ev.type === 'sneeze_blast') {
+              this.builtStage.spawnDustPuff(ev.position, 16);
+            } else if (ev.type === 'pileup' || ev.type === 'intruder_bonk') {
+              this.builtStage.spawnDustPuff(ev.position, 12);
+            } else if (ev.type === 'fall' || ev.type === 'slip') {
+              this.builtStage.spawnDustPuff(ev.position, 9);
+            } else if (ev.type === 'shove' || ev.type === 'jump' || ev.type === 'hat_pop') {
+              this.builtStage.spawnDustPuff(ev.position, 5);
+            }
           }
         }
 
-        this.liveMetrics = this.evaluator.evaluateLive(this.simulator.npcs, this.camera);
+        this.liveMetrics = this.evaluator.evaluateLive(
+          this.simulator.npcs,
+          this.camera,
+          this.simulator.intruder,
+        );
 
         const goodThreshold = Math.max(1, this.liveMetrics.totalCount - 1);
         if (

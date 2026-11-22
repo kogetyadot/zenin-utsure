@@ -1,11 +1,12 @@
 import * as THREE from 'three';
-import { PlatformTier, StageSpec } from '../types';
+import { PlatformTier, StageIntruderState, StageSpec } from '../types';
 
 export interface BuiltStage {
   root: THREE.Group;
   skyColor: THREE.Color;
   fogColor: THREE.Color;
   update(dt: number, elapsedTime: number): void;
+  syncIntruder(intruder: StageIntruderState, dt: number, elapsedTime: number): void;
   spawnDustPuff(pos: THREE.Vector3, count?: number): void;
   dispose(): void;
 }
@@ -1837,6 +1838,540 @@ function buildShrineLanterns(
 }
 
 // ============================================================================
+// Comical 3D Stage Intruder Rigs (暴走ハト & 暴走奈良のシカ with 鹿せんべい!)
+// ============================================================================
+
+interface IntruderRig {
+  root: THREE.Group;
+  sync(intruder: StageIntruderState, dt: number, elapsedTime: number): void;
+}
+
+function createSenbeiTexture(res: StageResourceTracker): THREE.CanvasTexture {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const cx = size * 0.5;
+    const cy = size * 0.5;
+    const r = size * 0.48;
+
+    // Warm toasted golden-brown 鹿せんべい cracker gradient
+    const grad = ctx.createRadialGradient(cx, cy, r * 0.12, cx, cy, r);
+    grad.addColorStop(0, '#eab66e');
+    grad.addColorStop(0.72, '#d69545');
+    grad.addColorStop(0.92, '#b8732a');
+    grad.addColorStop(1, '#9c5c1e');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+
+    // Subtle crisp pressed wafer ring
+    ctx.strokeStyle = 'rgba(138, 78, 22, 0.35)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.78, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Authentic crispy toasted bran speckles & tiny blister dots
+    let seed = 7719;
+    const rand = () => {
+      seed = (seed * 16807) % 2147483647;
+      return (seed - 1) / 2147483646;
+    };
+    for (let i = 0; i < 95; i++) {
+      const ang = rand() * Math.PI * 2;
+      const dist = Math.sqrt(rand()) * r * 0.9;
+      const x = cx + Math.cos(ang) * dist;
+      const y = cy + Math.sin(ang) * dist;
+      ctx.fillStyle =
+        rand() > 0.45 ? 'rgba(128, 68, 20, 0.42)' : 'rgba(255, 226, 178, 0.38)';
+      ctx.beginPath();
+      ctx.arc(x, y, 1.4 + rand() * 2.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  const tex = res.tex(new THREE.CanvasTexture(canvas));
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+function buildDoveIntruder(res: StageResourceTracker, parent: THREE.Group): IntruderRig {
+  const root = new THREE.Group();
+  root.name = 'intruder_dove';
+  root.visible = false;
+  parent.add(root);
+
+  const bodyGroup = new THREE.Group();
+  root.add(bodyGroup);
+
+  const whiteMat = res.stdMat('#fffdf9', 0.56);
+  const softGreyMat = res.stdMat('#dce5f0', 0.62);
+  const beakMat = res.stdMat('#ff942e', 0.42);
+  const bowMat = res.stdMat('#f43f5e', 0.45);
+  const scleraMat = res.stdMat('#ffffff', 0.24);
+  const pupilMat = res.stdMat('#141218', 0.12);
+  const blushMat = res.stdMat('#ff9eb5', 0.65);
+
+  // Plump comical wedding dove torso (+Z forward)
+  const torsoGeo = res.geo(new THREE.SphereGeometry(0.24, 18, 14));
+  const torso = new THREE.Mesh(torsoGeo, whiteMat);
+  torso.scale.set(0.95, 0.88, 1.38);
+  torso.castShadow = true;
+  bodyGroup.add(torso);
+
+  // Proud puffy chest crop
+  const chestGeo = res.geo(new THREE.SphereGeometry(0.185, 14, 12));
+  const chest = new THREE.Mesh(chestGeo, whiteMat);
+  chest.position.set(0, -0.02, 0.2);
+  chest.scale.set(0.96, 0.92, 0.92);
+  chest.castShadow = true;
+  bodyGroup.add(chest);
+
+  // Articulated bobbing head group
+  const headGroup = new THREE.Group();
+  headGroup.position.set(0, 0.23, 0.24);
+  bodyGroup.add(headGroup);
+
+  const headGeo = res.geo(new THREE.SphereGeometry(0.165, 16, 12));
+  const head = new THREE.Mesh(headGeo, whiteMat);
+  head.castShadow = true;
+  headGroup.add(head);
+
+  // Cute swept feather tuft on crown
+  const tuftGeo = res.geo(new THREE.ConeGeometry(0.04, 0.12, 8));
+  const tuft1 = new THREE.Mesh(tuftGeo, whiteMat);
+  tuft1.position.set(0, 0.17, -0.02);
+  tuft1.rotation.x = -0.45;
+  headGroup.add(tuft1);
+  const tuft2 = new THREE.Mesh(tuftGeo, softGreyMat);
+  tuft2.position.set(0, 0.15, -0.07);
+  tuft2.rotation.x = -0.82;
+  tuft2.scale.setScalar(0.8);
+  headGroup.add(tuft2);
+
+  // Big round googly eyes with hilariously mismatched goofy pupils!
+  const eyeGeo = res.geo(new THREE.SphereGeometry(0.068, 12, 10));
+  const pupilGeo = res.geo(new THREE.SphereGeometry(0.036, 10, 8));
+  const glintGeo = res.geo(new THREE.SphereGeometry(0.013, 8, 6));
+  const cheekGeo = res.geo(new THREE.SphereGeometry(0.036, 8, 8));
+
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Mesh(eyeGeo, scleraMat);
+    eye.position.set(s * 0.115, 0.045, 0.105);
+    headGroup.add(eye);
+
+    const pupil = new THREE.Mesh(pupilGeo, pupilMat);
+    // Slightly asymmetric googly pupil placement for maximum slapstick comedy
+    pupil.position.set(
+      s * 0.135,
+      s < 0 ? 0.068 : 0.028,
+      0.158,
+    );
+    pupil.scale.setScalar(s < 0 ? 1.08 : 0.82);
+    headGroup.add(pupil);
+
+    const glint = new THREE.Mesh(glintGeo, scleraMat);
+    glint.position.set(s * 0.128, s < 0 ? 0.082 : 0.04, 0.188);
+    headGroup.add(glint);
+
+    const cheek = new THREE.Mesh(cheekGeo, blushMat);
+    cheek.position.set(s * 0.125, -0.03, 0.095);
+    cheek.scale.set(0.85, 0.55, 0.55);
+    headGroup.add(cheek);
+  }
+
+  // Cute slightly-open orange beak mid-squawk pointing +Z
+  const upperBeakGeo = res.geo(new THREE.ConeGeometry(0.056, 0.16, 10));
+  const upperBeak = new THREE.Mesh(upperBeakGeo, beakMat);
+  upperBeak.position.set(0, 0.005, 0.21);
+  upperBeak.rotation.x = Math.PI / 2 - 0.08;
+  upperBeak.scale.set(1.0, 1.0, 0.78);
+  upperBeak.castShadow = true;
+  headGroup.add(upperBeak);
+
+  const lowerBeakGeo = res.geo(new THREE.ConeGeometry(0.042, 0.12, 8));
+  const lowerBeak = new THREE.Mesh(lowerBeakGeo, beakMat);
+  lowerBeak.position.set(0, -0.045, 0.195);
+  lowerBeak.rotation.x = Math.PI / 2 + 0.34;
+  lowerBeak.scale.set(0.95, 1.0, 0.65);
+  headGroup.add(lowerBeak);
+
+  // Tiny jaunty red bow tie on its neck!
+  const bowGroup = new THREE.Group();
+  bowGroup.position.set(0, 0.08, 0.31);
+  bodyGroup.add(bowGroup);
+
+  const bowWingGeo = res.geo(new THREE.ConeGeometry(0.046, 0.095, 6));
+  for (const s of [-1, 1]) {
+    const bw = new THREE.Mesh(bowWingGeo, bowMat);
+    bw.position.x = s * 0.052;
+    bw.rotation.z = s * (Math.PI / 2);
+    bw.scale.set(1, 1, 0.45);
+    bw.castShadow = true;
+    bowGroup.add(bw);
+  }
+  const bowKnotGeo = res.geo(new THREE.SphereGeometry(0.028, 8, 8));
+  bowGroup.add(new THREE.Mesh(bowKnotGeo, bowMat));
+
+  // Articulated flapping wings (layered fan of stylized feathers!)
+  const wingBaseGeo = res.geo(new THREE.SphereGeometry(0.18, 12, 10));
+  const featherGeo = res.geo(new THREE.CapsuleGeometry(0.048, 0.26, 6, 8));
+
+  const buildWing = (side: -1 | 1): THREE.Group => {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * 0.18, 0.06, 0.02);
+    bodyGroup.add(pivot);
+
+    const upper = new THREE.Mesh(wingBaseGeo, whiteMat);
+    upper.position.set(side * 0.18, 0.02, 0.01);
+    upper.scale.set(1.35, 0.26, 0.95);
+    upper.castShadow = true;
+    pivot.add(upper);
+
+    // Three layered primary feathers fanning out
+    const featherConfigs: Array<[number, number, number, THREE.Material]> = [
+      [0.36, 0.05, 0.18, whiteMat],
+      [0.38, -0.05, -0.05, softGreyMat],
+      [0.32, -0.14, -0.32, softGreyMat],
+    ];
+    for (const [fx, fz, yaw, mat] of featherConfigs) {
+      const f = new THREE.Mesh(featherGeo, mat);
+      f.position.set(side * fx, 0.01, fz);
+      f.rotation.z = Math.PI / 2;
+      f.rotation.y = side * yaw;
+      f.scale.set(1, 1, 0.42);
+      f.castShadow = true;
+      pivot.add(f);
+    }
+
+    return pivot;
+  };
+
+  const leftWingPivot = buildWing(-1);
+  const rightWingPivot = buildWing(1);
+
+  // Fluttering fan tail
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(0, -0.01, -0.28);
+  bodyGroup.add(tailPivot);
+
+  const tailFeatherGeo = res.geo(new THREE.CapsuleGeometry(0.052, 0.22, 6, 8));
+  for (let i = -1; i <= 1; i++) {
+    const tf = new THREE.Mesh(tailFeatherGeo, i === 0 ? whiteMat : softGreyMat);
+    tf.position.set(i * 0.075, 0.02, -0.13);
+    tf.rotation.x = Math.PI / 2 - 0.15;
+    tf.rotation.z = -i * 0.34;
+    tf.scale.set(1, 1, 0.35);
+    tf.castShadow = true;
+    tailPivot.add(tf);
+  }
+
+  // Cute tucked dangling orange feet
+  const feetPivot = new THREE.Group();
+  feetPivot.position.set(0, -0.2, -0.04);
+  bodyGroup.add(feetPivot);
+
+  const footStemGeo = res.geo(new THREE.CylinderGeometry(0.018, 0.018, 0.11, 8));
+  const toeGeo = res.geo(new THREE.ConeGeometry(0.036, 0.09, 6));
+  for (const s of [-1, 1]) {
+    const stem = new THREE.Mesh(footStemGeo, beakMat);
+    stem.position.set(s * 0.075, -0.04, 0);
+    feetPivot.add(stem);
+
+    const foot = new THREE.Mesh(toeGeo, beakMat);
+    foot.position.set(s * 0.075, -0.1, 0.03);
+    foot.rotation.x = -Math.PI / 2;
+    foot.scale.set(1.2, 1, 0.35);
+    feetPivot.add(foot);
+  }
+
+  const sync = (intruder: StageIntruderState, _dt: number, elapsedTime: number): void => {
+    root.visible = intruder.active;
+    if (!intruder.active) return;
+
+    root.position.copy(intruder.position);
+    root.rotation.y = intruder.facingYaw;
+
+    const flapPhase = elapsedTime * 22 + intruder.phase;
+    const flap = Math.sin(flapPhase);
+
+    leftWingPivot.rotation.z = flap * 0.95 + 0.16;
+    rightWingPivot.rotation.z = -flap * 0.95 - 0.16;
+    leftWingPivot.rotation.y = Math.cos(flapPhase) * 0.24;
+    rightWingPivot.rotation.y = -Math.cos(flapPhase) * 0.24;
+
+    bodyGroup.position.y = -flap * 0.07;
+    bodyGroup.rotation.x = 0.14 + Math.sin(elapsedTime * 11 + intruder.phase) * 0.09;
+    bodyGroup.rotation.z = Math.sin(elapsedTime * 8 + intruder.phase) * 0.14;
+
+    headGroup.position.z = 0.24 + Math.sin(elapsedTime * 18) * 0.035;
+    headGroup.rotation.z = Math.cos(elapsedTime * 10) * 0.12;
+
+    tailPivot.rotation.x = 0.18 + Math.cos(flapPhase) * 0.28;
+    feetPivot.rotation.x = -0.55 + Math.sin(flapPhase * 0.5) * 0.22;
+  };
+
+  return { root, sync };
+}
+
+function buildDeerIntruder(res: StageResourceTracker, parent: THREE.Group): IntruderRig {
+  const root = new THREE.Group();
+  root.name = 'intruder_deer';
+  root.visible = false;
+  parent.add(root);
+
+  const bodyGroup = new THREE.Group();
+  root.add(bodyGroup);
+
+  const coatMat = res.stdMat('#c88546', 0.72);
+  const creamMat = res.stdMat('#f6e4c4', 0.76);
+  const hoofMat = res.stdMat('#2e201a', 0.48);
+  const antlerMat = res.stdMat('#ebd8b7', 0.6);
+  const whiteTailMat = res.stdMat('#fffdf8', 0.8);
+  const scleraMat = res.stdMat('#ffffff', 0.22);
+  const pupilMat = res.stdMat('#141218', 0.12);
+  const senbeiTex = createSenbeiTexture(res);
+  const senbeiMat = res.mat(
+    new THREE.MeshStandardMaterial({
+      map: senbeiTex,
+      roughness: 0.72,
+      metalness: 0.02,
+    }),
+  );
+
+  // Chunky adorable caramel-brown barrel torso (+Z forward)
+  const torsoGeo = res.geo(new THREE.CapsuleGeometry(0.24, 0.46, 10, 16));
+  const torso = new THREE.Mesh(torsoGeo, coatMat);
+  torso.position.set(0, 0.58, 0);
+  torso.rotation.x = Math.PI / 2;
+  torso.scale.set(1.02, 1.05, 0.96);
+  torso.castShadow = true;
+  torso.receiveShadow = true;
+  bodyGroup.add(torso);
+
+  // Soft cream underside belly patch
+  const bellyGeo = res.geo(new THREE.SphereGeometry(0.2, 12, 10));
+  const belly = new THREE.Mesh(bellyGeo, creamMat);
+  belly.position.set(0, 0.45, 0.01);
+  belly.scale.set(0.88, 0.52, 1.75);
+  bodyGroup.add(belly);
+
+  // Signature Nara fawn cream spots on both flanks & back!
+  const spotGeo = res.geo(new THREE.SphereGeometry(0.044, 8, 8));
+  const spotCoords: Array<[number, number, number, number]> = [
+    [-0.22, 0.65, 0.14, 1.0],
+    [-0.23, 0.58, -0.02, 0.85],
+    [-0.21, 0.66, -0.18, 0.95],
+    [-0.17, 0.74, 0.02, 0.78],
+    [-0.15, 0.72, -0.26, 0.82],
+    [0.22, 0.65, 0.14, 1.0],
+    [0.23, 0.58, -0.02, 0.85],
+    [0.21, 0.66, -0.18, 0.95],
+    [0.17, 0.74, 0.02, 0.78],
+    [0.15, 0.72, -0.26, 0.82],
+  ];
+  for (const [sx, sy, sz, sc] of spotCoords) {
+    const spot = new THREE.Mesh(spotGeo, creamMat);
+    spot.position.set(sx, sy, sz);
+    spot.scale.set(0.45 * sc, 0.9 * sc, 1.05 * sc);
+    bodyGroup.add(spot);
+  }
+
+  // Four briskly trotting legs with dark espresso hooves touching y = 0
+  const legGeo = res.geo(new THREE.CylinderGeometry(0.052, 0.04, 0.42, 10));
+  const hoofGeo = res.geo(new THREE.CylinderGeometry(0.044, 0.052, 0.085, 10));
+
+  const buildLeg = (x: number, z: number): THREE.Group => {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, 0.48, z);
+    bodyGroup.add(pivot);
+
+    const leg = new THREE.Mesh(legGeo, coatMat);
+    leg.position.y = -0.21;
+    leg.castShadow = true;
+    pivot.add(leg);
+
+    const hoof = new THREE.Mesh(hoofGeo, hoofMat);
+    hoof.position.y = -0.438;
+    hoof.castShadow = true;
+    pivot.add(hoof);
+
+    return pivot;
+  };
+
+  const flLeg = buildLeg(-0.14, 0.25);
+  const frLeg = buildLeg(0.14, 0.25);
+  const blLeg = buildLeg(-0.145, -0.24);
+  const brLeg = buildLeg(0.145, -0.24);
+
+  // White fluffy tail on rump
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(0, 0.68, -0.42);
+  bodyGroup.add(tailPivot);
+
+  const tailPuffGeo = res.geo(new THREE.SphereGeometry(0.095, 12, 10));
+  const tailPuff = new THREE.Mesh(tailPuffGeo, whiteTailMat);
+  tailPuff.position.set(0, 0.05, -0.05);
+  tailPuff.scale.set(0.88, 1.28, 0.92);
+  tailPuff.castShadow = true;
+  tailPivot.add(tailPuff);
+
+  // Upright neck rising into chunky adorable head
+  const neckGeo = res.geo(new THREE.CylinderGeometry(0.115, 0.155, 0.34, 12));
+  const neck = new THREE.Mesh(neckGeo, coatMat);
+  neck.position.set(0, 0.77, 0.34);
+  neck.rotation.x = 0.26;
+  neck.castShadow = true;
+  bodyGroup.add(neck);
+
+  // Cream chest bib on front of neck
+  const bibGeo = res.geo(new THREE.SphereGeometry(0.125, 10, 8));
+  const bib = new THREE.Mesh(bibGeo, creamMat);
+  bib.position.set(0, 0.68, 0.42);
+  bib.scale.set(0.85, 1.15, 0.55);
+  bodyGroup.add(bib);
+
+  // Articulated deer head pivot
+  const headPivot = new THREE.Group();
+  headPivot.position.set(0, 0.96, 0.43);
+  bodyGroup.add(headPivot);
+
+  const headGeo = res.geo(new THREE.SphereGeometry(0.19, 16, 14));
+  const head = new THREE.Mesh(headGeo, coatMat);
+  head.scale.set(0.98, 0.94, 1.12);
+  head.castShadow = true;
+  headPivot.add(head);
+
+  // Cream muzzle/snout pointing +Z + shiny dark nose button
+  const snoutGeo = res.geo(new THREE.SphereGeometry(0.118, 14, 10));
+  const snout = new THREE.Mesh(snoutGeo, creamMat);
+  snout.position.set(0, -0.055, 0.19);
+  snout.scale.set(1.06, 0.82, 1.18);
+  snout.castShadow = true;
+  headPivot.add(snout);
+
+  const noseGeo = res.geo(new THREE.SphereGeometry(0.045, 10, 8));
+  const nose = new THREE.Mesh(noseGeo, hoofMat);
+  nose.position.set(0, -0.015, 0.31);
+  nose.scale.set(1.18, 0.85, 0.78);
+  headPivot.add(nose);
+
+  // Cute floppy-perky deer ears with cream inner accent
+  const earOuterGeo = res.geo(new THREE.SphereGeometry(0.095, 10, 8));
+  const earInnerGeo = res.geo(new THREE.SphereGeometry(0.064, 8, 8));
+  for (const s of [-1, 1]) {
+    const earGroup = new THREE.Group();
+    earGroup.position.set(s * 0.175, 0.11, -0.02);
+    earGroup.rotation.set(-0.1, s * 0.25, s * -0.52);
+    headPivot.add(earGroup);
+
+    const outer = new THREE.Mesh(earOuterGeo, coatMat);
+    outer.scale.set(0.55, 1.25, 0.42);
+    outer.castShadow = true;
+    earGroup.add(outer);
+
+    const inner = new THREE.Mesh(earInnerGeo, creamMat);
+    inner.position.z = 0.022;
+    inner.scale.set(0.52, 1.12, 0.3);
+    earGroup.add(inner);
+  }
+
+  // Branching cute antlers!
+  const antlerStemGeo = res.geo(new THREE.CapsuleGeometry(0.024, 0.22, 5, 8));
+  const antlerTineGeo = res.geo(new THREE.CapsuleGeometry(0.018, 0.12, 5, 8));
+  for (const s of [-1, 1]) {
+    const antlerGroup = new THREE.Group();
+    antlerGroup.position.set(s * 0.088, 0.16, -0.02);
+    antlerGroup.rotation.set(-0.18, 0, s * -0.34);
+    headPivot.add(antlerGroup);
+
+    const stem = new THREE.Mesh(antlerStemGeo, antlerMat);
+    stem.position.y = 0.11;
+    stem.castShadow = true;
+    antlerGroup.add(stem);
+
+    // Front-inner tine fork
+    const tine1 = new THREE.Mesh(antlerTineGeo, antlerMat);
+    tine1.position.set(s * -0.035, 0.14, 0.055);
+    tine1.rotation.set(0.65, 0, s * 0.42);
+    tine1.castShadow = true;
+    antlerGroup.add(tine1);
+
+    // Upper-outer tine fork
+    const tine2 = new THREE.Mesh(antlerTineGeo, antlerMat);
+    tine2.position.set(s * 0.055, 0.23, -0.02);
+    tine2.rotation.set(-0.22, 0, s * -0.62);
+    tine2.castShadow = true;
+    antlerGroup.add(tine2);
+  }
+
+  // Huge deadpan eyes staring straight ahead (+Z)!
+  const eyeGeo = res.geo(new THREE.SphereGeometry(0.068, 12, 10));
+  const pupilGeo = res.geo(new THREE.SphereGeometry(0.029, 10, 8));
+  const glintGeo = res.geo(new THREE.SphereGeometry(0.011, 8, 6));
+  const lidGeo = res.geo(new THREE.BoxGeometry(0.12, 0.026, 0.055));
+
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Mesh(eyeGeo, scleraMat);
+    eye.position.set(s * 0.112, 0.048, 0.142);
+    headPivot.add(eye);
+
+    // Dead-center forward-staring deadpan pupil
+    const pupil = new THREE.Mesh(pupilGeo, pupilMat);
+    pupil.position.set(s * 0.116, 0.046, 0.204);
+    headPivot.add(pupil);
+
+    const glint = new THREE.Mesh(glintGeo, scleraMat);
+    glint.position.set(s * 0.106, 0.058, 0.228);
+    headPivot.add(glint);
+
+    // Flat horizontal deadpan upper eyelid bar
+    const lid = new THREE.Mesh(lidGeo, coatMat);
+    lid.position.set(s * 0.114, 0.098, 0.172);
+    lid.rotation.y = s * 0.2;
+    headPivot.add(lid);
+  }
+
+  // Round crispy 鹿せんべい (Nara deer cracker) clamped proudly in its mouth!!
+  const senbeiGeo = res.geo(new THREE.CylinderGeometry(0.145, 0.145, 0.024, 20));
+  const senbei = new THREE.Mesh(senbeiGeo, senbeiMat);
+  senbei.position.set(0.01, -0.092, 0.315);
+  senbei.rotation.set(0.18, 0.14, -0.08);
+  senbei.castShadow = true;
+  headPivot.add(senbei);
+
+  const sync = (intruder: StageIntruderState, _dt: number, elapsedTime: number): void => {
+    root.visible = intruder.active;
+    if (!intruder.active) return;
+
+    root.position.copy(intruder.position);
+    root.rotation.y = intruder.facingYaw;
+
+    const trot = elapsedTime * 18 + intruder.phase;
+    const stride = Math.sin(trot) * 0.78;
+
+    flLeg.rotation.x = stride;
+    brLeg.rotation.x = stride;
+    frLeg.rotation.x = -stride;
+    blLeg.rotation.x = -stride;
+
+    bodyGroup.position.y = Math.abs(Math.sin(trot)) * 0.085;
+    bodyGroup.rotation.x = 0.06 + Math.sin(trot * 2) * 0.045;
+    bodyGroup.rotation.z = Math.sin(trot) * 0.075;
+
+    headPivot.rotation.x = -0.04 + Math.cos(trot * 2) * 0.055;
+    headPivot.rotation.z = -Math.sin(trot) * 0.06;
+
+    tailPivot.rotation.z = Math.sin(trot * 1.6) * 0.45;
+    tailPivot.rotation.x = -0.32 + Math.cos(trot * 2) * 0.16;
+  };
+
+  return { root, sync };
+}
+
+// ============================================================================
 // Public Entry Point
 // ============================================================================
 
@@ -1873,6 +2408,11 @@ export function buildStage(stage: StageSpec): BuiltStage {
   } else {
     buildSchoolTripStage(stage, res, root, petals, swayTargets);
   }
+
+  // Stage-specific slapstick 3D intruder rig (wedding -> 暴走ハト, school_trip -> 暴走奈良のシカ!)
+  const intruderRig = isWedding
+    ? buildDoveIntruder(res, root)
+    : buildDeerIntruder(res, root);
 
   const update = (dt: number, elapsedTime: number): void => {
     const safeDt = Math.min(dt, 0.1);
@@ -1941,6 +2481,7 @@ export function buildStage(stage: StageSpec): BuiltStage {
     skyColor,
     fogColor,
     update,
+    syncIntruder: intruderRig.sync,
     spawnDustPuff: dust.spawn,
     dispose: () => res.disposeAll(),
   };

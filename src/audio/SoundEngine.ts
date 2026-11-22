@@ -704,6 +704,13 @@ export class SoundEngine {
       peek_pop: 0.12,
       pose: 0.15,
       get_up: 0.15,
+      hat_pop: 0.16,
+      sneeze_charge: 0.45,
+      sneeze_blast: 0.45,
+      intruder_enter: 0.55,
+      intruder_bonk: 0.2,
+      lens_bomb: 0.45,
+      slip: 0.18,
     };
 
     const prev = this.lastSimEventAt[ev.type] ?? -10;
@@ -873,6 +880,389 @@ export class SoundEngine {
           gain.connect(this.sfxGain);
           osc.start(now);
           osc.stop(now + 0.095);
+          break;
+        }
+
+        case 'hat_pop': {
+          // Upward cartoon slide-whistle (380Hz -> 1320Hz) + cork-pop onset
+          const pop = ctx.createOscillator();
+          const popGain = ctx.createGain();
+          pop.type = 'sine';
+          pop.frequency.setValueAtTime(280, now);
+          pop.frequency.exponentialRampToValueAtTime(760, now + 0.032);
+          popGain.gain.setValueAtTime(0.001, now);
+          popGain.gain.linearRampToValueAtTime(0.24 * intensity, now + 0.005);
+          popGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.042);
+          pop.connect(popGain);
+          popGain.connect(this.sfxGain);
+          pop.start(now);
+          pop.stop(now + 0.05);
+
+          const whistle = ctx.createOscillator();
+          const breath = ctx.createOscillator();
+          const wGain = ctx.createGain();
+          const bGain = ctx.createGain();
+          whistle.type = 'sine';
+          whistle.frequency.setValueAtTime(380, now + 0.012);
+          whistle.frequency.exponentialRampToValueAtTime(1320, now + 0.23);
+
+          breath.type = 'triangle';
+          breath.frequency.setValueAtTime(760, now + 0.012);
+          breath.frequency.exponentialRampToValueAtTime(2640, now + 0.23);
+
+          wGain.gain.setValueAtTime(0.0001, now + 0.012);
+          wGain.gain.linearRampToValueAtTime(0.22 * intensity, now + 0.035);
+          wGain.gain.setValueAtTime(0.2 * intensity, now + 0.17);
+          wGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.26);
+
+          bGain.gain.setValueAtTime(0.0001, now + 0.012);
+          bGain.gain.linearRampToValueAtTime(0.055 * intensity, now + 0.035);
+          bGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+
+          whistle.connect(wGain);
+          breath.connect(bGain);
+          bGain.connect(wGain);
+          wGain.connect(this.sfxGain);
+          whistle.start(now + 0.012);
+          breath.start(now + 0.012);
+          whistle.stop(now + 0.27);
+          breath.stop(now + 0.27);
+          break;
+        }
+
+        case 'slip': {
+          // Rapid banana-peel zip whistle + comic thud
+          const zip = ctx.createOscillator();
+          const zipGain = ctx.createGain();
+          zip.type = 'sine';
+          zip.frequency.setValueAtTime(620, now);
+          zip.frequency.exponentialRampToValueAtTime(1880, now + 0.068);
+          zip.frequency.exponentialRampToValueAtTime(410, now + 0.135);
+          zipGain.gain.setValueAtTime(0.001, now);
+          zipGain.gain.linearRampToValueAtTime(0.21 * intensity, now + 0.012);
+          zipGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.145);
+          zip.connect(zipGain);
+          zipGain.connect(this.sfxGain);
+          zip.start(now);
+          zip.stop(now + 0.155);
+
+          // Juicy comic landing thud
+          const thudT = now + 0.125;
+          const thud = ctx.createOscillator();
+          const thudGain = ctx.createGain();
+          thud.type = 'triangle';
+          thud.frequency.setValueAtTime(185, thudT);
+          thud.frequency.exponentialRampToValueAtTime(52, thudT + 0.095);
+          thudGain.gain.setValueAtTime(0.001, thudT);
+          thudGain.gain.linearRampToValueAtTime(0.32 * intensity, thudT + 0.006);
+          thudGain.gain.exponentialRampToValueAtTime(0.0001, thudT + 0.11);
+          thud.connect(thudGain);
+          thudGain.connect(this.sfxGain);
+          thud.start(thudT);
+          thud.stop(thudT + 0.12);
+
+          if (this.noiseBuffer) {
+            const puff = ctx.createBufferSource();
+            puff.buffer = this.noiseBuffer;
+            const lp = ctx.createBiquadFilter();
+            lp.type = 'lowpass';
+            lp.frequency.setValueAtTime(650, thudT);
+            const pGain = ctx.createGain();
+            pGain.gain.setValueAtTime(0.001, thudT);
+            pGain.gain.linearRampToValueAtTime(0.18 * intensity, thudT + 0.006);
+            pGain.gain.exponentialRampToValueAtTime(0.0001, thudT + 0.07);
+            puff.connect(lp);
+            lp.connect(pGain);
+            pGain.connect(this.sfxGain);
+            puff.start(thudT, 0.1, 0.08);
+          }
+          break;
+        }
+
+        case 'sneeze_charge': {
+          // Comical double-inhale gasps ("ha... HAAAH...")
+          const gasps = [
+            { offset: 0, fStart: 350, fEnd: 540, bpStart: 950, bpEnd: 2350, dur: 0.15, vol: 0.16 },
+            { offset: 0.21, fStart: 420, fEnd: 690, bpStart: 1200, bpEnd: 2950, dur: 0.18, vol: 0.22 },
+          ];
+          for (const g of gasps) {
+            const t = now + g.offset;
+            const osc = ctx.createOscillator();
+            const oGain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(g.fStart, t);
+            osc.frequency.exponentialRampToValueAtTime(g.fEnd, t + g.dur);
+            oGain.gain.setValueAtTime(0.0001, t);
+            oGain.gain.linearRampToValueAtTime(g.vol * 0.55 * intensity, t + g.dur * 0.55);
+            oGain.gain.exponentialRampToValueAtTime(0.0001, t + g.dur);
+            osc.connect(oGain);
+            oGain.connect(this.sfxGain);
+            osc.start(t);
+            osc.stop(t + g.dur + 0.02);
+
+            if (this.noiseBuffer) {
+              const nSrc = ctx.createBufferSource();
+              nSrc.buffer = this.noiseBuffer;
+              const bp = ctx.createBiquadFilter();
+              bp.type = 'bandpass';
+              bp.frequency.setValueAtTime(g.bpStart, t);
+              bp.frequency.exponentialRampToValueAtTime(g.bpEnd, t + g.dur);
+              bp.Q.setValueAtTime(2.6, t);
+              const nGain = ctx.createGain();
+              nGain.gain.setValueAtTime(0.0001, t);
+              nGain.gain.linearRampToValueAtTime(g.vol * intensity, t + g.dur * 0.5);
+              nGain.gain.exponentialRampToValueAtTime(0.0001, t + g.dur);
+              nSrc.connect(bp);
+              bp.connect(nGain);
+              nGain.connect(this.sfxGain);
+              nSrc.start(t, Math.random() * 0.5, g.dur + 0.03);
+            }
+          }
+          break;
+        }
+
+        case 'sneeze_blast': {
+          // Explosive filtered sneeze burst + downward pitch whoosh ("ACHOO!!")
+          if (this.noiseBuffer) {
+            // Crisp "CH-" consonant snap
+            const chSrc = ctx.createBufferSource();
+            chSrc.buffer = this.noiseBuffer;
+            const chBp = ctx.createBiquadFilter();
+            chBp.type = 'bandpass';
+            chBp.frequency.setValueAtTime(3400, now);
+            chBp.Q.setValueAtTime(1.8, now);
+            const chGain = ctx.createGain();
+            chGain.gain.setValueAtTime(0.001, now);
+            chGain.gain.linearRampToValueAtTime(0.45 * intensity, now + 0.006);
+            chGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.055);
+            chSrc.connect(chBp);
+            chBp.connect(chGain);
+            chGain.connect(this.sfxGain);
+            chSrc.start(now, 0.15, 0.065);
+
+            // Explosive "-OOOO!!" gust sweep
+            const blastT = now + 0.022;
+            const bSrc = ctx.createBufferSource();
+            bSrc.buffer = this.noiseBuffer;
+            const bFilter = ctx.createBiquadFilter();
+            bFilter.type = 'bandpass';
+            bFilter.frequency.setValueAtTime(2600, blastT);
+            bFilter.frequency.exponentialRampToValueAtTime(380, blastT + 0.31);
+            bFilter.Q.setValueAtTime(1.1, blastT);
+            const bGain = ctx.createGain();
+            bGain.gain.setValueAtTime(0.001, blastT);
+            bGain.gain.linearRampToValueAtTime(0.54 * intensity, blastT + 0.018);
+            bGain.gain.exponentialRampToValueAtTime(0.0001, blastT + 0.34);
+            bSrc.connect(bFilter);
+            bFilter.connect(bGain);
+            bGain.connect(this.sfxGain);
+            bSrc.start(blastT, 0.35, 0.36);
+          }
+
+          // Comical downward vocal whoosh
+          const voice = ctx.createOscillator();
+          const vFilter = ctx.createBiquadFilter();
+          const vGain = ctx.createGain();
+          voice.type = 'sawtooth';
+          voice.frequency.setValueAtTime(640, now + 0.015);
+          voice.frequency.exponentialRampToValueAtTime(165, now + 0.28);
+          vFilter.type = 'bandpass';
+          vFilter.frequency.setValueAtTime(1350, now + 0.015);
+          vFilter.frequency.exponentialRampToValueAtTime(340, now + 0.28);
+          vFilter.Q.setValueAtTime(2.2, now + 0.015);
+          vGain.gain.setValueAtTime(0.001, now + 0.015);
+          vGain.gain.linearRampToValueAtTime(0.24 * intensity, now + 0.032);
+          vGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+          voice.connect(vFilter);
+          vFilter.connect(vGain);
+          vGain.connect(this.sfxGain);
+          voice.start(now + 0.015);
+          voice.stop(now + 0.32);
+
+          // Slapstick shockwave sub-punch
+          const punch = ctx.createOscillator();
+          const pGain = ctx.createGain();
+          punch.type = 'sine';
+          punch.frequency.setValueAtTime(160, now + 0.015);
+          punch.frequency.exponentialRampToValueAtTime(48, now + 0.14);
+          pGain.gain.setValueAtTime(0.001, now + 0.015);
+          pGain.gain.linearRampToValueAtTime(0.3 * intensity, now + 0.022);
+          pGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.155);
+          punch.connect(pGain);
+          pGain.connect(this.sfxGain);
+          punch.start(now + 0.015);
+          punch.stop(now + 0.165);
+          break;
+        }
+
+        case 'intruder_enter': {
+          // Bubbly dove coo warble (クルッポー♪) or comical nasal deer bleat
+          const lowerId = ev.npcId.toLowerCase();
+          const isDeer =
+            lowerId.includes('deer') ||
+            (!lowerId.includes('dove') && this.currentStage === 'school_trip');
+
+          if (isDeer) {
+            // Comical nasal deer bleat with vibrato
+            const carrier = ctx.createOscillator();
+            const vibrato = ctx.createOscillator();
+            const vibGain = ctx.createGain();
+            const formant = ctx.createBiquadFilter();
+            const gain = ctx.createGain();
+
+            carrier.type = 'sawtooth';
+            carrier.frequency.setValueAtTime(405, now);
+            carrier.frequency.linearRampToValueAtTime(510, now + 0.09);
+            carrier.frequency.exponentialRampToValueAtTime(355, now + 0.34);
+
+            vibrato.type = 'sine';
+            vibrato.frequency.setValueAtTime(19, now);
+            vibGain.gain.setValueAtTime(24, now);
+            vibrato.connect(vibGain);
+            vibGain.connect(carrier.frequency);
+
+            formant.type = 'bandpass';
+            formant.frequency.setValueAtTime(1320, now);
+            formant.frequency.linearRampToValueAtTime(1650, now + 0.12);
+            formant.frequency.linearRampToValueAtTime(1080, now + 0.34);
+            formant.Q.setValueAtTime(4.2, now);
+
+            gain.gain.setValueAtTime(0.0001, now);
+            gain.gain.linearRampToValueAtTime(0.28 * intensity, now + 0.025);
+            gain.gain.setValueAtTime(0.24 * intensity, now + 0.22);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.37);
+
+            carrier.connect(formant);
+            formant.connect(gain);
+            gain.connect(this.sfxGain);
+
+            carrier.start(now);
+            vibrato.start(now);
+            carrier.stop(now + 0.39);
+            vibrato.stop(now + 0.39);
+          } else {
+            // Bubbly dove coo warble ("Kururu-pooo♪") + wing flutter
+            const coo = ctx.createOscillator();
+            const warble = ctx.createOscillator();
+            const warbleGain = ctx.createGain();
+            const cGain = ctx.createGain();
+
+            coo.type = 'sine';
+            coo.frequency.setValueAtTime(520, now);
+            coo.frequency.linearRampToValueAtTime(590, now + 0.13);
+            coo.frequency.setValueAtTime(660, now + 0.155);
+            coo.frequency.exponentialRampToValueAtTime(505, now + 0.36);
+
+            warble.type = 'sine';
+            warble.frequency.setValueAtTime(28, now);
+            warbleGain.gain.setValueAtTime(48, now);
+            warbleGain.gain.setValueAtTime(48, now + 0.13);
+            warbleGain.gain.linearRampToValueAtTime(10, now + 0.17);
+            warble.connect(warbleGain);
+            warbleGain.connect(coo.frequency);
+
+            cGain.gain.setValueAtTime(0.0001, now);
+            cGain.gain.linearRampToValueAtTime(0.22 * intensity, now + 0.025);
+            cGain.gain.linearRampToValueAtTime(0.06 * intensity, now + 0.14);
+            cGain.gain.linearRampToValueAtTime(0.25 * intensity, now + 0.175);
+            cGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
+
+            coo.connect(cGain);
+            cGain.connect(this.sfxGain);
+            coo.start(now);
+            warble.start(now);
+            coo.stop(now + 0.4);
+            warble.stop(now + 0.4);
+
+            // Soft wing-flap bursts
+            if (this.noiseBuffer) {
+              [0.02, 0.11, 0.2].forEach((offset) => {
+                const ft = now + offset;
+                const fSrc = ctx.createBufferSource();
+                fSrc.buffer = this.noiseBuffer!;
+                const fBp = ctx.createBiquadFilter();
+                fBp.type = 'bandpass';
+                fBp.frequency.setValueAtTime(820, ft);
+                fBp.Q.setValueAtTime(1.5, ft);
+                const fGain = ctx.createGain();
+                fGain.gain.setValueAtTime(0.0001, ft);
+                fGain.gain.linearRampToValueAtTime(0.11 * intensity, ft + 0.015);
+                fGain.gain.exponentialRampToValueAtTime(0.0001, ft + 0.055);
+                fSrc.connect(fBp);
+                fBp.connect(fGain);
+                fGain.connect(this.sfxGain!);
+                fSrc.start(ft, 0.2, 0.065);
+              });
+            }
+          }
+          break;
+        }
+
+        case 'intruder_bonk': {
+          // Cartoon bowling-pin BONK + scatter rattle
+          const bonk = ctx.createOscillator();
+          const bGain = ctx.createGain();
+          bonk.type = 'triangle';
+          bonk.frequency.setValueAtTime(340, now);
+          bonk.frequency.exponentialRampToValueAtTime(105, now + 0.095);
+          bGain.gain.setValueAtTime(0.001, now);
+          bGain.gain.linearRampToValueAtTime(0.36 * intensity, now + 0.005);
+          bGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+          bonk.connect(bGain);
+          bGain.connect(this.sfxGain);
+          bonk.start(now);
+          bonk.stop(now + 0.12);
+
+          // Hollow wooden head-knock resonance
+          this.playWoodblock(now, 740, 0.28 * intensity, this.sfxGain);
+
+          // Bowling-pin scatter clatter cascade
+          const pins = [
+            { t: 0.048, f: 1320, v: 0.22 },
+            { t: 0.098, f: 990, v: 0.19 },
+            { t: 0.155, f: 1510, v: 0.16 },
+            { t: 0.215, f: 1140, v: 0.13 },
+          ];
+          for (const pin of pins) {
+            this.playWoodblock(now + pin.t, pin.f, pin.v * intensity, this.sfxGain);
+          }
+          break;
+        }
+
+        case 'lens_bomb': {
+          // Dramatic Japanese variety-show brassy comedy sting ("ジャンッ！！")
+          this.playBrassChord([58, 64, 67, 70, 74], now, 0.42, 0.24 * intensity, this.sfxGain);
+
+          // Low dramatic timpani boom
+          const boom = ctx.createOscillator();
+          const boomGain = ctx.createGain();
+          boom.type = 'sine';
+          boom.frequency.setValueAtTime(145, now);
+          boom.frequency.exponentialRampToValueAtTime(52, now + 0.26);
+          boomGain.gain.setValueAtTime(0.001, now);
+          boomGain.gain.linearRampToValueAtTime(0.34 * intensity, now + 0.01);
+          boomGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.29);
+          boom.connect(boomGain);
+          boomGain.connect(this.sfxGain);
+          boom.start(now);
+          boom.stop(now + 0.31);
+
+          // Crisp cymbal splash accent
+          if (this.noiseBuffer) {
+            const cym = ctx.createBufferSource();
+            cym.buffer = this.noiseBuffer;
+            const hp = ctx.createBiquadFilter();
+            hp.type = 'highpass';
+            hp.frequency.setValueAtTime(5200, now);
+            const cGain = ctx.createGain();
+            cGain.gain.setValueAtTime(0.001, now);
+            cGain.gain.linearRampToValueAtTime(0.18 * intensity, now + 0.008);
+            cGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+            cym.connect(hp);
+            hp.connect(cGain);
+            cGain.connect(this.sfxGain);
+            cym.start(now, 0.4, 0.26);
+          }
           break;
         }
       }

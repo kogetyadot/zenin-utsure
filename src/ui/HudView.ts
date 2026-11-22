@@ -47,6 +47,20 @@ const STAGE_OVERLAY_COPY: Record<StageId, { top: string; main: string }> = {
   school_trip: { top: '修学旅行', main: '古都の石段' },
 };
 
+const CHEESE_CALLOUTS = [
+  '「はい、チーズ！📸」',
+  '「笑って〜！変顔禁止！！」',
+  '「そこの人、前出すぎ〜！」',
+  '「全員ストップ！！！」',
+] as const;
+
+function getComedyReactionWord(comedyScore: number): string {
+  if (comedyScore >= 80) return '腹筋崩壊！';
+  if (comedyScore >= 55) return '大爆笑！';
+  if (comedyScore >= 30) return 'じわじわ';
+  return '';
+}
+
 const ICON_SOUND_ON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>`;
 
 const ICON_SOUND_OFF = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>`;
@@ -75,7 +89,9 @@ function classifyVerdict(v: NpcPhotoVerdict): 'good' | 'warn' | 'bad' {
     !v.lookingAtCamera ||
     v.expression === 'blink_warn' ||
     v.expression === 'surprised' ||
-    v.expression === 'nervous'
+    v.expression === 'nervous' ||
+    v.expression === 'sneeze' ||
+    v.expression === 'hen_gao'
   ) {
     return 'warn';
   }
@@ -128,6 +144,7 @@ export class HudView {
   private readonly faceLockCountEl: HTMLSpanElement;
   private readonly faceLockVipEl: HTMLSpanElement;
   private readonly qualityFillEl: HTMLDivElement;
+  private readonly chaosAlertEl: HTMLDivElement;
   private readonly tipPillEl: HTMLDivElement;
   private readonly finishEarlyBtn: HTMLButtonElement;
   private readonly muteBtn: HTMLButtonElement;
@@ -145,8 +162,10 @@ export class HudView {
   private readonly toastImgEl: HTMLImageElement;
   private readonly toastRankEl: HTMLSpanElement;
   private readonly toastScoreEl: HTMLSpanElement;
+  private readonly toastComedyEl: HTMLSpanElement;
   private readonly toastCaptionEl: HTMLDivElement;
   private readonly cheeseWaveEl: HTMLDivElement;
+  private readonly cheeseWaveLabelEl: HTMLDivElement;
 
   // Result Album Elements
   private readonly resultStageTitleEl: HTMLSpanElement;
@@ -157,6 +176,9 @@ export class HudView {
   private readonly filmstripEl: HTMLDivElement;
   private readonly resultRankSeal: HTMLDivElement;
   private readonly resultScoreNum: HTMLSpanElement;
+  private readonly resultComedyPillEl: HTMLSpanElement;
+  private readonly resultComedyValEl: HTMLSpanElement;
+  private readonly resultComedyWordEl: HTMLSpanElement;
   private readonly resultCaptionEl: HTMLHeadingElement;
   private readonly resultSubCaptionEl: HTMLParagraphElement;
   private readonly comedyAwardBanner: HTMLDivElement;
@@ -193,9 +215,11 @@ export class HudView {
   private lastCheeseRatioKey = -1;
   private lastCheeseSec = -1;
   private lastBestSignature = '';
+  private lastIntruderAlert = '';
   private lastTipText = '';
   private lastTipTone: 'neutral' | 'good' | 'warn' = 'neutral';
   private lastTipChangeMs = 0;
+  private cheeseCalloutIndex = 0;
   private isZoomSliding = false;
 
   // Accurate NEW BEST tracking across rounds
@@ -207,6 +231,7 @@ export class HudView {
   private resultMaxShots = 5;
   private selectedPhotoIndex = 0;
   private bestPhotoIndex = 0;
+  private funniestPhotoIndex = -1;
 
   // Timers & cleanup
   private flashTimerId: number | null = null;
@@ -370,6 +395,7 @@ export class HudView {
       </header>
 
       <div class="hud-tip-row" aria-live="polite">
+        <div class="hud-chaos-alert is-hidden" role="status"></div>
         <div class="hud-tip-pill">ドラッグで角度を変えて全員を写そう！</div>
       </div>
 
@@ -379,7 +405,10 @@ export class HudView {
           <span class="toast-rank">S</span>
         </div>
         <div class="toast-meta">
-          <span class="toast-score">88 pt</span>
+          <div class="toast-score-row">
+            <span class="toast-score">88 pt</span>
+            <span class="toast-comedy-badge is-hidden">🤣 爆笑 0%</span>
+          </div>
           <div class="toast-caption">ナイスショット！</div>
         </div>
       </div>
@@ -469,6 +498,9 @@ export class HudView {
     this.qualityFillEl = this.hudScreen.querySelector(
       '.facelock-quality-fill',
     ) as HTMLDivElement;
+    this.chaosAlertEl = this.hudScreen.querySelector(
+      '.hud-chaos-alert',
+    ) as HTMLDivElement;
     this.tipPillEl = this.hudScreen.querySelector('.hud-tip-pill') as HTMLDivElement;
     this.finishEarlyBtn = this.hudScreen.querySelector(
       '#btn-finish-early',
@@ -498,10 +530,16 @@ export class HudView {
     this.toastImgEl = this.hudScreen.querySelector('.toast-img') as HTMLImageElement;
     this.toastRankEl = this.hudScreen.querySelector('.toast-rank') as HTMLSpanElement;
     this.toastScoreEl = this.hudScreen.querySelector('.toast-score') as HTMLSpanElement;
+    this.toastComedyEl = this.hudScreen.querySelector(
+      '.toast-comedy-badge',
+    ) as HTMLSpanElement;
     this.toastCaptionEl = this.hudScreen.querySelector(
       '.toast-caption',
     ) as HTMLDivElement;
     this.cheeseWaveEl = this.hudScreen.querySelector('.cheese-wave') as HTMLDivElement;
+    this.cheeseWaveLabelEl = this.hudScreen.querySelector(
+      '.cheese-wave-label',
+    ) as HTMLDivElement;
 
     // Pre-allocate reusable pool of 16 Face-AF boxes for zero-churn 60 FPS updates
     for (let i = 0; i < AF_POOL_SIZE; i++) {
@@ -613,8 +651,14 @@ export class HudView {
               <div class="rank-seal rank-a">A</div>
               <div class="score-hero-copy">
                 <div class="score-total-row">
-                  <span class="score-total-num">0</span>
-                  <span class="score-total-denom">/ 100 pt</span>
+                  <div class="score-total-main">
+                    <span class="score-total-num">0</span>
+                    <span class="score-total-denom">/ 100 pt</span>
+                  </div>
+                  <span class="comedy-meter-pill">
+                    <span class="comedy-meter-val">🤣 爆笑度 0%</span>
+                    <span class="comedy-meter-word is-hidden"></span>
+                  </span>
                 </div>
                 <h3 class="result-caption">ナイスショット！</h3>
                 <p class="result-subcaption">みんなバッチリ写っています！</p>
@@ -709,6 +753,15 @@ export class HudView {
     this.resultScoreNum = this.resultScreen.querySelector(
       '.score-total-num',
     ) as HTMLSpanElement;
+    this.resultComedyPillEl = this.resultScreen.querySelector(
+      '.comedy-meter-pill',
+    ) as HTMLSpanElement;
+    this.resultComedyValEl = this.resultScreen.querySelector(
+      '.comedy-meter-val',
+    ) as HTMLSpanElement;
+    this.resultComedyWordEl = this.resultScreen.querySelector(
+      '.comedy-meter-word',
+    ) as HTMLSpanElement;
     this.resultCaptionEl = this.resultScreen.querySelector(
       '.result-caption',
     ) as HTMLHeadingElement;
@@ -786,11 +839,20 @@ export class HudView {
         // Capture pre-round best score BEFORE any shots in this round update it!
         this.roundStartBestScore = snapshot.bestScoreByStage[snapshot.stageId] ?? 0;
         this.lastTipChangeMs = 0;
+        this.cheeseCalloutIndex = 0;
+        this.lastIntruderAlert = '';
+        this.chaosAlertEl.classList.add('is-hidden');
+        this.chaosAlertEl.classList.remove('is-pop');
+        this.tipPillEl.classList.remove('is-hidden');
       }
 
       if (snapshot.phase !== 'playing') {
         this.hideAllAfBoxes();
         this.polaroidToastEl.classList.remove('is-visible');
+        this.lastIntruderAlert = '';
+        this.chaosAlertEl.classList.add('is-hidden');
+        this.chaosAlertEl.classList.remove('is-pop');
+        this.tipPillEl.classList.remove('is-hidden');
       }
 
       if (snapshot.phase === 'result') {
@@ -835,6 +897,16 @@ export class HudView {
     this.toastRankEl.textContent = photo.score.rank;
     this.toastRankEl.className = `toast-rank ${rankClassName(photo.score.rank)}`;
     this.toastScoreEl.textContent = `${photo.score.totalScore} pt`;
+    const comedyPct = Math.max(
+      0,
+      Math.min(100, Math.round(photo.score.comedyScore ?? 0)),
+    );
+    if (comedyPct >= 30) {
+      this.toastComedyEl.textContent = `🤣 爆笑 ${comedyPct}%`;
+      this.toastComedyEl.classList.remove('is-hidden');
+    } else {
+      this.toastComedyEl.classList.add('is-hidden');
+    }
     this.toastCaptionEl.textContent = photo.score.caption;
 
     if (this.toastTimerId !== null) {
@@ -850,6 +922,10 @@ export class HudView {
   }
 
   public triggerCheeseWave(): void {
+    const callout = CHEESE_CALLOUTS[this.cheeseCalloutIndex];
+    this.cheeseCalloutIndex = (this.cheeseCalloutIndex + 1) % CHEESE_CALLOUTS.length;
+    this.cheeseWaveLabelEl.textContent = callout;
+
     if (this.cheeseWaveTimerId !== null) {
       window.clearTimeout(this.cheeseWaveTimerId);
     }
@@ -1009,6 +1085,9 @@ export class HudView {
       this.qualityFillEl.style.width = `${qBucket}%`;
     }
 
+    // Live comic intruder / chaos alert takes immediate priority over quiet tips
+    this.updateChaosAlert(m.intruderAlert);
+
     // Dynamic contextual photographer tip
     this.updateContextualTip(m);
 
@@ -1058,6 +1137,24 @@ export class HudView {
 
     // Update pooled Face-AF corner brackets
     this.updateFaceAfBoxes(m.faceBoxes);
+  }
+
+  private updateChaosAlert(rawAlert?: string): void {
+    const alertText = (rawAlert ?? '').trim();
+    if (alertText === this.lastIntruderAlert) return;
+    this.lastIntruderAlert = alertText;
+
+    if (alertText.length > 0) {
+      this.chaosAlertEl.textContent = alertText;
+      this.chaosAlertEl.classList.remove('is-hidden', 'is-pop');
+      void this.chaosAlertEl.offsetWidth;
+      this.chaosAlertEl.classList.add('is-pop');
+      this.tipPillEl.classList.add('is-hidden');
+    } else {
+      this.chaosAlertEl.classList.add('is-hidden');
+      this.chaosAlertEl.classList.remove('is-pop');
+      this.tipPillEl.classList.remove('is-hidden');
+    }
   }
 
   private updateContextualTip(m: LiveCameraMetrics): void {
@@ -1237,6 +1334,7 @@ export class HudView {
     this.resultStageTitleEl.textContent = STAGES[snapshot.stageId].title;
 
     if (this.resultPhotos.length === 0) {
+      this.funniestPhotoIndex = -1;
       this.resultPolaroidWrap.classList.add('is-hidden');
       this.resultEmptyState.classList.remove('is-hidden');
       this.buildFilmstrip();
@@ -1246,6 +1344,7 @@ export class HudView {
       this.resultRankSeal.textContent = 'C';
       this.resultRankSeal.className = 'rank-seal rank-c';
       this.resultScoreNum.textContent = '0';
+      this.updateResultComedyMeter(0);
       this.resultCaptionEl.textContent = 'シャッターチャンスを逃した！';
       this.resultSubCaptionEl.textContent =
         '制限時間内にシャッターを切って、みんなを写してみよう！';
@@ -1272,6 +1371,24 @@ export class HudView {
     this.bestPhotoIndex = bestIdx;
     this.selectedPhotoIndex = bestIdx;
 
+    // Identify funniest photo (comedyScore >= 50 and a different shot from BEST!)
+    let funniestIdx = -1;
+    let funniestScore = -1;
+    for (let i = 0; i < this.resultPhotos.length; i++) {
+      const c = this.resultPhotos[i].score.comedyScore ?? 0;
+      if (
+        c > funniestScore ||
+        (c === funniestScore && funniestIdx === bestIdx && i !== bestIdx)
+      ) {
+        funniestScore = c;
+        funniestIdx = i;
+      }
+    }
+    this.funniestPhotoIndex =
+      funniestIdx !== -1 && funniestIdx !== bestIdx && funniestScore >= 50
+        ? funniestIdx
+        : -1;
+
     // Strictly check if this round BEAT the pre-round best score (no false NEW BEST on ties!)
     const isGenuineNewBest =
       bestScore > 0 && bestScore > this.roundStartBestScore;
@@ -1295,10 +1412,12 @@ export class HudView {
         btn.dataset.index = String(idx);
 
         const isBest = idx === this.bestPhotoIndex;
+        const isFunniest = idx === this.funniestPhotoIndex;
         btn.innerHTML = `
           <div class="filmstrip-thumb-wrap">
             <img src="${photo.rawDataUrl || photo.polaroidDataUrl}" alt="ショット #${photo.shotIndex}" class="filmstrip-thumb" />
             ${isBest ? '<span class="filmstrip-best-star">★ BEST</span>' : ''}
+            ${isFunniest ? '<span class="filmstrip-comedy-star">🤣 爆笑</span>' : ''}
             <span class="filmstrip-shot-num">#${photo.shotIndex}</span>
           </div>
           <div class="filmstrip-foot">
@@ -1344,10 +1463,11 @@ export class HudView {
     this.resultPolaroidImg.src = photo.polaroidDataUrl || photo.rawDataUrl;
     this.resultPolaroidImg.alt = `ショット #${photo.shotIndex} ${score.caption}`;
 
-    // Score & Rank Seal
+    // Score & Rank Seal & Comedy Meter
     this.resultRankSeal.textContent = score.rank;
     this.resultRankSeal.className = `rank-seal ${rankClassName(score.rank)}`;
     this.resultScoreNum.textContent = String(score.totalScore);
+    this.updateResultComedyMeter(score.comedyScore ?? 0);
     this.resultCaptionEl.textContent = score.caption;
     this.resultSubCaptionEl.textContent = score.subCaption;
 
@@ -1370,6 +1490,24 @@ export class HudView {
 
     // Subject Verdict Chips
     this.renderVerdictChips(score.verdicts);
+  }
+
+  private updateResultComedyMeter(rawComedy: number): void {
+    const pct = Math.max(0, Math.min(100, Math.round(rawComedy)));
+    const word = getComedyReactionWord(pct);
+
+    this.resultComedyValEl.textContent = `🤣 爆笑度 ${pct}%`;
+    if (word) {
+      this.resultComedyWordEl.textContent = word;
+      this.resultComedyWordEl.classList.remove('is-hidden');
+    } else {
+      this.resultComedyWordEl.textContent = '';
+      this.resultComedyWordEl.classList.add('is-hidden');
+    }
+
+    this.resultComedyPillEl.classList.toggle('is-rofl', pct >= 80);
+    this.resultComedyPillEl.classList.toggle('is-high', pct >= 55 && pct < 80);
+    this.resultComedyPillEl.classList.toggle('is-mid', pct >= 30 && pct < 55);
   }
 
   private setBreakdownBars(

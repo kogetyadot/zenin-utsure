@@ -4,12 +4,12 @@ export type StageId = 'wedding' | 'school_trip';
 
 export type ArchetypeId =
   | 'vip'        // 主役 (Bride/Groom or Teacher) — central anchor, gets flustered if shoved
-  | 'showoff'    // 目立ちたがり — rushes forward & center when camera focuses on them
+  | 'showoff'    // 目立ちたがり — rushes forward & sprints right into the lens!
   | 'shy'        // 恥ずかしがり — hides behind tall neighbor when directly targeted, peeks when camera shifts slightly away
-  | 'peeker'     // ひょっこり — short, jumps/tiptoes/requests shoulder-ride when occluded
-  | 'jumper'     // ジャンパー — charges up & leaps into peace-sign jump when framed
-  | 'helper'     // おせっかい — rushes to rescue fallen NPCs, risking comedic pileups
-  | 'blinker';   // うっかり — gets distracted or blinks unless woken by camera sweep or "Say Cheese!"
+  | 'peeker'     // ひょっこり — short, jumps/tiptoes/requests wobbly shoulder-ride when occluded
+  | 'jumper'     // ジャンパー — charges up & leaps into absurd star/backbend peace jumps when framed
+  | 'helper'     // おせっかい — rushes to rescue fallen NPCs, risking comedic bowling pileups
+  | 'blinker';   // うっかり — gets distracted, blinks, OR builds up a mega-sneeze shockwave!
 
 export type ExpressionId =
   | 'smile'      // Big happy smile (best score!)
@@ -20,7 +20,9 @@ export type ExpressionId =
   | 'blink_warn' // Half-closed sleepy eyelids (telegraph right before blink!)
   | 'blink'      // Fully closed eyes (penalized in photo!)
   | 'dizzy'      // Swirly eyes (fallen / knocked down)
-  | 'smug';      // Cheeky show-off grin
+  | 'smug'       // Cheeky show-off grin
+  | 'sneeze'     // Hilarious scrunched-up "ACHOO!!" face (>< eyes + wide mouth + comic puff)
+  | 'hen_gao';   // Absurd cross-eyed tongue-out goofy face (アッカンベー変顔!)
 
 export type ActionState =
   | 'idle'
@@ -50,7 +52,9 @@ export type ReactionIcon =
   | '✨'
   | '💤'
   | '✌'
-  | '❤';
+  | '❤'
+  | '🤧'
+  | '🤪';
 
 export interface CharacterAppearance {
   skinColor: string;
@@ -69,10 +73,10 @@ export interface CharacterAppearance {
 export interface NpcSpec {
   id: string;
   name: string;
-  roleLabel: string; // e.g., "新婦", "目立ちたがり", etc.
+  roleLabel: string;
   archetype: ArchetypeId;
   isVip: boolean;
-  homePos: { x: number; z: number }; // Initial target slot on stage
+  homePos: { x: number; z: number };
   appearance: CharacterAppearance;
 }
 
@@ -82,7 +86,7 @@ export interface PlatformTier {
   maxX: number;
   minZ: number;
   maxZ: number;
-  height: number; // Y surface height
+  height: number;
 }
 
 export interface StageSpec {
@@ -90,15 +94,15 @@ export interface StageSpec {
   title: string;
   subtitle: string;
   description: string;
-  roundDuration: number; // seconds (e.g. 40)
-  maxShots: number;      // e.g. 5
+  roundDuration: number;
+  maxShots: number;
   stageBounds: { minX: number; maxX: number; minZ: number; maxZ: number };
   platforms: PlatformTier[];
   defaultCamera: {
-    azimuth: number;   // radians around Y
-    elevation: number; // radians above horizon
-    distance: number;  // meters from target
-    fov: number;       // degrees
+    azimuth: number;
+    elevation: number;
+    distance: number;
+    fov: number;
     target: { x: number; y: number; z: number };
   };
   cameraLimits: {
@@ -116,41 +120,58 @@ export interface StageSpec {
   roster: NpcSpec[];
 }
 
+export interface StageIntruderState {
+  kind: 'dove' | 'deer';
+  active: boolean;
+  warningTimer: number; // >0 before entering so player sees comedic warning!
+  warningSide: -1 | 0 | 1;
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
+  facingYaw: number;
+  phase: number;
+  activeTimer: number;
+}
+
 export interface NpcRuntimeState {
   spec: NpcSpec;
   position: THREE.Vector3;
   velocity: THREE.Vector3;
   groundY: number;
-  facingYaw: number;         // Body facing angle (0 = +Z toward default camera)
-  headYawOffset: number;     // Relative head yaw toward camera / interest
-  headPitchOffset: number;   // Relative head pitch
-  tiltX: number;             // Forward/back body lean (radians)
-  tiltZ: number;             // Sideways lean / fall roll (radians)
-  squashY: number;           // Squash & stretch factor (1 = normal)
-  radius: number;            // Collision cylinder radius
-  height: number;            // Full character standing height
-  headRadius: number;        // Head sphere radius for occlusion checks
-  headWorldPos: THREE.Vector3; // Cached world position of head center
-  headForward: THREE.Vector3;  // Cached world unit vector of face direction
+  facingYaw: number;
+  headYawOffset: number;
+  headPitchOffset: number;
+  tiltX: number;
+  tiltZ: number;
+  squashY: number;
+  radius: number;
+  height: number;
+  headRadius: number;
+  headWorldPos: THREE.Vector3;
+  headForward: THREE.Vector3;
   action: ActionState;
   actionTimer: number;
   expression: ExpressionId;
   reactionIcon: ReactionIcon;
   reactionTimer: number;
-  balance: number;           // 0..1 (drops on shove; <= 0 triggers knockdown!)
-  excitement: number;        // 0..1 (builds up for jumpers/showoffs)
-  blinkTimer: number;        // Countdown to next blink cycle
-  cheeseBuffTimer: number;   // >0 right after "Say Cheese!" call
-  poseIntensity: number;     // 0..1 arm pose blend (peace sign, wave, etc.)
-  walkPhase: number;         // Procedural locomotion phase
-  cameraAttention: number;   // 0..1 how directly the camera is pointed at this NPC
+  balance: number;
+  excitement: number;
+  blinkTimer: number;
+  cheeseBuffTimer: number;
+  poseIntensity: number;
+  walkPhase: number;
+  cameraAttention: number;
   isOccludedFromCamera: boolean;
-  screenNdc: THREE.Vector3;  // Projected head position in NDC
-  riderId: string | null;    // ID of peeker sitting on this NPC's shoulders
-  carrierId: string | null;  // ID of NPC carrying this peeker
+  screenNdc: THREE.Vector3;
+  riderId: string | null;
+  carrierId: string | null;
   helpTargetId: string | null;
   cooldownTimer: number;
-  // Transient event flags emitted during a sim tick (consumed by Audio/VFX)
+  // Bakage comedy runtime fields!
+  hatPopHeight: number;      // >0 when hat/accessory flies sky-high on impact!
+  hatPopVel: number;         // Vertical velocity of flying hat
+  hatSpin: number;           // Spin angle of flying hat
+  sneezeCharge: number;      // 0..1 pre-sneeze inhale shake before mega sneeze!
+  lensBombProgress: number;  // 0..1 showoff sprinting right up to the camera lens!
   events: SimEvent[];
 }
 
@@ -162,7 +183,14 @@ export type SimEventType =
   | 'shoulder_mount'
   | 'peek_pop'
   | 'pose'
-  | 'get_up';
+  | 'get_up'
+  | 'hat_pop'
+  | 'sneeze_charge'
+  | 'sneeze_blast'
+  | 'intruder_enter'
+  | 'intruder_bonk'
+  | 'lens_bomb'
+  | 'slip';
 
 export interface SimEvent {
   type: SimEventType;
@@ -176,12 +204,11 @@ export interface LiveFaceBox {
   name: string;
   isVip: boolean;
   archetype: ArchetypeId;
-  // Normalized viewport coordinates [0..1]
   screenX: number;
   screenY: number;
-  boxSize: number; // Normalized width/height of face box
+  boxSize: number;
   status: 'good' | 'warn' | 'bad' | 'hidden';
-  label: string;   // Short Japanese tag if warn/bad, e.g. "まばたき" / "隠れ" / "転倒"
+  label: string;
   visibleRatio: number;
 }
 
@@ -192,7 +219,8 @@ export interface LiveCameraMetrics {
   vipVisibleCount: number;
   vipTotalCount: number;
   faceBoxes: LiveFaceBox[];
-  estimatedQuality: number; // 0..100 rough live estimate for AF sound/meter
+  estimatedQuality: number;
+  intruderAlert?: string; // Short comic live alert banner when dove/deer or sneeze is imminent!
 }
 
 export interface NpcPhotoVerdict {
@@ -203,27 +231,28 @@ export interface NpcPhotoVerdict {
   archetype: ArchetypeId;
   inFrame: boolean;
   edgeClipped: boolean;
-  visibleRatio: number; // 0, 0.33, 0.67, 1.0
+  visibleRatio: number;
   lookingAtCamera: boolean;
   expression: ExpressionId;
   action: ActionState;
-  screenX: number; // 0..1
-  screenY: number; // 0..1
+  screenX: number;
+  screenY: number;
   faceScreenSize: number;
   points: number;
-  tag: string; // e.g. "ベスト笑顔", "見切れ", "後ろに隠れた", "目をつぶった", "転倒中！", "肩車成功！"
+  tag: string;
 }
 
 export type PhotoRank = 'S+' | 'S' | 'A' | 'B' | 'C';
 
 export interface ComedyAward {
   id: string;
-  badge: string;  // e.g. "💥 ドミノ惨事賞"
+  badge: string;
   reason: string;
 }
 
 export interface PhotoScoreBreakdown {
-  totalScore: number;       // 0..100
+  totalScore: number;       // 0..100 (写真スコア)
+  comedyScore: number;      // 0..100 (🤣 爆笑度 / Bakage Meter!)
   rank: PhotoRank;
   coverageScore: number;    // 0..40 (全員写り)
   expressionScore: number;  // 0..30 (表情・目線)
@@ -237,20 +266,26 @@ export interface PhotoScoreBreakdown {
   jumpingCount: number;
   blinkingCount: number;
   shoulderRideCount: number;
-  caption: string;          // Dynamic Japanese headline for this photo!
-  subCaption: string;       // Funny / insightful one-line commentary
+  flyingHatCount: number;
+  intruderInFrame: boolean;
+  intruderKind: 'dove' | 'deer' | null;
+  henGaoCount: number;
+  sneezeCount: number;
+  lensBombCount: number;
+  caption: string;
+  subCaption: string;
   comedyAward: ComedyAward | null;
   verdicts: NpcPhotoVerdict[];
 }
 
 export interface CapturedPhoto {
   id: number;
-  shotIndex: number; // 1..maxShots
+  shotIndex: number;
   timestampRemaining: number;
   stageId: StageId;
   stageTitle: string;
-  rawDataUrl: string;      // Clean 3D render snapshot
-  polaroidDataUrl: string; // Styled souvenir Polaroid with frame, stamp & caption
+  rawDataUrl: string;
+  polaroidDataUrl: string;
   score: PhotoScoreBreakdown;
 }
 
@@ -263,9 +298,9 @@ export interface GameHudSnapshot {
   roundDuration: number;
   shotsUsed: number;
   maxShots: number;
-  cheeseCooldown: number;    // 0 = ready
+  cheeseCooldown: number;
   cheeseMaxCooldown: number;
-  zoomPercent: number;       // 0..100
+  zoomPercent: number;
   muted: boolean;
   liveMetrics: LiveCameraMetrics;
   latestPhoto: CapturedPhoto | null;

@@ -559,6 +559,246 @@ function paintExpression(
       ctx.restore();
       break;
     }
+
+    case 'sneeze': {
+      // Intense pink flushed cheeks + extra cute red nose flush!
+      drawBlush(ctx, Math.max(baseBlush + 0.36, 0.84), true);
+
+      // Cute slightly flushed nose
+      ctx.save();
+      ctx.fillStyle = '#e87882';
+      ctx.beginPath();
+      ctx.ellipse(0, 5.2, 3.0, 2.0, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Tightly scrunched comic > < eyes!
+      ctx.strokeStyle = '#201412';
+      ctx.lineWidth = 3.9;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      // Left eye: '>' pointing inward toward nose bridge
+      ctx.beginPath();
+      ctx.moveTo(-24.5, -8.5);
+      ctx.lineTo(-9.5, -1.5);
+      ctx.lineTo(-24.5, 5.2);
+      ctx.stroke();
+
+      // Right eye: '<' pointing inward toward nose bridge
+      ctx.beginPath();
+      ctx.moveTo(24.5, -8.5);
+      ctx.lineTo(9.5, -1.5);
+      ctx.lineTo(24.5, 5.2);
+      ctx.stroke();
+
+      // Tiny scrunch-wrinkle stress ticks beside outer corners
+      ctx.lineWidth = 1.8;
+      ctx.strokeStyle = darkenHex(skinColor, 0.32);
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(side * 27.5, -4.5);
+        ctx.lineTo(side * 31.2, -5.8);
+        ctx.moveTo(side * 27.5, 1.8);
+        ctx.lineTo(side * 31.2, 3.2);
+        ctx.stroke();
+      }
+
+      // Tightly furrowed brows pulled down toward center
+      drawEyebrow(ctx, -25.5, -16.2, -16.5, -12.5, -8.2, -9.8, 2.8);
+      drawEyebrow(ctx, 8.2, -9.8, 16.5, -12.5, 25.5, -16.2, 2.8);
+
+      // Wide open explosive "ACHOO!!" mouth
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(-12.5, 13.5);
+      ctx.bezierCurveTo(-11.5, 8.2, 11.5, 8.2, 12.5, 13.5);
+      ctx.bezierCurveTo(15.5, 21.5, 10.5, 31.5, 0, 31.5);
+      ctx.bezierCurveTo(-10.5, 31.5, -15.5, 21.5, -12.5, 13.5);
+      ctx.closePath();
+      ctx.fillStyle = '#c43245';
+      ctx.fill();
+
+      ctx.save();
+      ctx.clip();
+      // Upper white teeth band
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-15, 8.0, 30, 5.4);
+      // Animated quivering tongue at bottom
+      ctx.fillStyle = '#ff7b96';
+      ctx.beginPath();
+      ctx.ellipse(0, 29.5, 9.8, 7.0, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      ctx.strokeStyle = '#3a181c';
+      ctx.lineWidth = 2.6;
+      ctx.stroke();
+      ctx.restore();
+
+      // Tiny crisp white-and-sky comic sneeze puff marks bursting outward from mouth!
+      ctx.save();
+      for (const side of [-1, 1]) {
+        const px = side * 19.5;
+        const py = 22.5;
+        // Little puffy cloud burst
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#5bbce8';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(px, py, 3.8, 0, Math.PI * 2);
+        ctx.arc(px + side * 3.6, py + 1.8, 2.8, 0, Math.PI * 2);
+        ctx.arc(px + side * 1.4, py - 2.6, 2.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Speed burst wind ticks
+        ctx.strokeStyle = '#6ec8f2';
+        ctx.lineWidth = 1.9;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(side * 14.5, 17.8);
+        ctx.lineTo(side * 22.0, 14.5);
+        ctx.moveTo(side * 15.2, 26.8);
+        ctx.lineTo(side * 23.2, 29.8);
+        ctx.stroke();
+      }
+      ctx.restore();
+      break;
+    }
+
+    case 'hen_gao': {
+      // アッカンベー変顔! Hilarious cross-eyed goofy face with sideways tongue!
+      drawBlush(ctx, Math.max(baseBlush + 0.24, 0.7), true);
+      drawCuteNose(ctx, skinColor);
+
+      // Left eye: huge wild wide-open sclera with BIG pupil looking sharply inward-up
+      ctx.save();
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#201412';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.ellipse(-16.5, -2.5, 9.6, 10.2, -0.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Big manic left pupil looking inward & slightly up
+      ctx.fillStyle = '#1e1412';
+      ctx.beginPath();
+      ctx.ellipse(-12.2, -4.8, 5.2, 5.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(-13.8, -6.8, 1.9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(-10.4, -2.8, 0.9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Right eye: slightly smaller quirky sclera with TINY pupil looking outward-down!
+      ctx.save();
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#201412';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.ellipse(16.8, -0.8, 7.6, 8.2, 0.12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Tiny derpy right pupil drifting outward-down
+      ctx.fillStyle = '#1e1412';
+      ctx.beginPath();
+      ctx.arc(20.0, 2.2, 2.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(19.0, 1.0, 1.0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Cheeky pink lower-lid pull hint under right eye (classic アッカンベー!)
+      ctx.fillStyle = '#ff859d';
+      ctx.beginPath();
+      ctx.ellipse(16.8, 6.2, 4.6, 2.1, 0.08, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Hilarious wiggly asymmetric eyebrows (left sky-high wavy, right squished low & crooked!)
+      ctx.save();
+      ctx.strokeStyle = '#3d281f';
+      ctx.lineWidth = 2.8;
+      ctx.lineCap = 'round';
+      // Left sky-high wiggly arch
+      ctx.beginPath();
+      ctx.moveTo(-26.5, -16.5);
+      ctx.bezierCurveTo(-21.5, -24.5, -14.5, -15.5, -8.5, -22.2);
+      ctx.stroke();
+      // Right crooked squiggly low brow
+      ctx.beginPath();
+      ctx.moveTo(8.5, -12.0);
+      ctx.bezierCurveTo(13.5, -16.5, 18.5, -8.5, 25.5, -14.5);
+      ctx.stroke();
+      ctx.restore();
+
+      // Wide cheeky open mouth
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(-14.5, 13.8);
+      ctx.quadraticCurveTo(0, 9.2, 14.8, 12.6);
+      ctx.quadraticCurveTo(14.5, 24.5, 0.5, 24.8);
+      ctx.quadraticCurveTo(-13.8, 25.0, -14.5, 13.8);
+      ctx.closePath();
+      ctx.fillStyle = '#a8283b';
+      ctx.fill();
+
+      ctx.save();
+      ctx.clip();
+      // Crisp goofy upper teeth
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-16, 9.0, 32, 5.0);
+      ctx.restore();
+
+      ctx.strokeStyle = '#3a181c';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.restore();
+
+      // Bright pink cheeky tongue sticking WAY out sideways!
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(-2.0, 17.5);
+      ctx.bezierCurveTo(3.5, 15.2, 13.8, 16.5, 15.8, 23.2);
+      ctx.bezierCurveTo(17.6, 29.8, 11.2, 35.8, 4.5, 33.6);
+      ctx.bezierCurveTo(-1.2, 31.6, -5.2, 24.2, -2.0, 17.5);
+      ctx.closePath();
+
+      const tongueGrad = ctx.createLinearGradient(0, 16, 14, 34);
+      tongueGrad.addColorStop(0, '#ff7aa8');
+      tongueGrad.addColorStop(1, '#ff4d88');
+      ctx.fillStyle = tongueGrad;
+      ctx.fill();
+
+      ctx.strokeStyle = '#5c1931';
+      ctx.lineWidth = 2.3;
+      ctx.stroke();
+
+      // Tongue center crease line
+      ctx.strokeStyle = '#c42b5e';
+      ctx.lineWidth = 1.9;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(4.0, 18.8);
+      ctx.quadraticCurveTo(8.5, 23.5, 9.6, 28.8);
+      ctx.stroke();
+
+      // Glossy wet highlight dot on tongue
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+      ctx.beginPath();
+      ctx.ellipse(3.6, 25.2, 1.9, 3.2, -0.45, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      break;
+    }
   }
 
   ctx.restore();

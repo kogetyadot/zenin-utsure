@@ -8,6 +8,7 @@ import {
   NpcRuntimeState,
   PhotoRank,
   PhotoScoreBreakdown,
+  StageIntruderState,
   StageSpec,
 } from '../types';
 
@@ -35,6 +36,8 @@ const EXPRESSION_QUALITY: Record<ExpressionId, number> = {
   nervous: 0.48,
   blink_warn: 0.45,
   surprised: 0.35,
+  hen_gao: 0.28,
+  sneeze: 0.16,
   blink: 0.1,
   dizzy: 0.05,
 };
@@ -196,6 +199,7 @@ export class PhotoEvaluator {
   public evaluateLive(
     npcs: NpcRuntimeState[],
     camera: THREE.PerspectiveCamera,
+    intruder?: StageIntruderState,
   ): LiveCameraMetrics {
     const count = npcs.length;
     const evaluated = this.analyzeNpcs(npcs, camera, false);
@@ -205,12 +209,17 @@ export class PhotoEvaluator {
     let smilingCount = 0;
     let vipVisibleCount = 0;
     let vipTotalCount = 0;
+    let hasSneezeCharge = false;
+    let hasLensBomb = false;
     const faceBoxes: LiveFaceBox[] = new Array(count);
 
     for (let i = 0; i < count; i++) {
       const ev = evaluated[i];
       const npc = ev.npc;
       const isVisible = ev.inFrame && ev.visibleRatio >= 0.67;
+
+      if (npc.sneezeCharge > 0.2) hasSneezeCharge = true;
+      if (npc.lensBombProgress > 0.55) hasLensBomb = true;
 
       if (npc.spec.isVip) {
         vipTotalCount++;
@@ -244,6 +253,18 @@ export class PhotoEvaluator {
       };
     }
 
+    let intruderAlert: string | undefined;
+    if (intruder && (intruder.warningTimer > 0 || intruder.active)) {
+      intruderAlert =
+        intruder.kind === 'dove'
+          ? '🕊️ 暴走ハト接近中！！'
+          : '🦌 奈良のシカ乱入！！';
+    } else if (hasSneezeCharge) {
+      intruderAlert = '🤧 くしゃみ爆発寸前！！';
+    } else if (hasLensBomb) {
+      intruderAlert = '😱 目立ちたがりレンズ突撃中！！';
+    }
+
     return {
       visibleCount,
       smilingCount,
@@ -252,16 +273,40 @@ export class PhotoEvaluator {
       vipTotalCount,
       faceBoxes,
       estimatedQuality: scores.totalScore,
+      intruderAlert,
     };
   }
 
+  private isWorldPointInFrustum(
+    x: number,
+    y: number,
+    z: number,
+    camera: THREE.PerspectiveCamera,
+    marginX = 0.98,
+    marginY = 0.96,
+  ): boolean {
+    this._ndc.set(x, y, z).project(camera);
+    const forwardDot =
+      (x - this._camPos.x) * this._camForward.x +
+      (y - this._camPos.y) * this._camForward.y +
+      (z - this._camPos.z) * this._camForward.z;
+    return (
+      forwardDot > 0.15 &&
+      this._ndc.z > -1 &&
+      this._ndc.z < 1 &&
+      Math.abs(this._ndc.x) <= marginX &&
+      Math.abs(this._ndc.y) <= marginY
+    );
+  }
+
   /**
-   * Full transparent photo evaluation with 100-point breakdown, captions, and comedy awards.
+   * Full transparent photo evaluation with 100-point breakdown, comedy meter, captions, and comedy awards.
    */
   public evaluatePhoto(
     npcs: NpcRuntimeState[],
     camera: THREE.PerspectiveCamera,
     stage: StageSpec,
+    intruder?: StageIntruderState,
   ): PhotoScoreBreakdown {
     const count = npcs.length;
     const evaluated = this.analyzeNpcs(npcs, camera, true).slice(0, count);
@@ -276,6 +321,26 @@ export class PhotoEvaluator {
     let blinkingCount = 0;
     let shoulderRideCount = 0;
     let visibleShoulderRideCount = 0;
+    let flyingHatCount = 0;
+    let henGaoCount = 0;
+    let sneezeCount = 0;
+    let lensBombCount = 0;
+
+    // Check whether active stage intruder (dove / deer) is captured inside camera frustum
+    let intruderInFrame = false;
+    let intruderKind: 'dove' | 'deer' | null = null;
+    if (intruder && intruder.active) {
+      const p = intruder.position;
+      const baseVisible = this.isWorldPointInFrustum(p.x, p.y, p.z, camera);
+      const upperVisible =
+        intruder.kind === 'deer'
+          ? this.isWorldPointInFrustum(p.x, p.y + 0.95, p.z, camera)
+          : false;
+      if (baseVisible || upperVisible) {
+        intruderInFrame = true;
+        intruderKind = intruder.kind;
+      }
+    }
 
     // Track blocker -> set of victim NPC IDs for photobomb comedy detection
     const blockerVictims = new Map<string, Set<string>>();
@@ -308,6 +373,33 @@ export class PhotoEvaluator {
         if (isVisible && (!carrier || (carrier.inFrame && carrier.visibleRatio >= 0.67))) {
           visibleShoulderRideCount++;
         }
+      }
+
+      // Bakage slapstick counters
+      if (
+        npc.hatPopHeight > 0.16 &&
+        (ev.inFrame ||
+          this.isWorldPointInFrustum(
+            npc.headWorldPos.x,
+            npc.headWorldPos.y + npc.hatPopHeight,
+            npc.headWorldPos.z,
+            camera,
+          ))
+      ) {
+        flyingHatCount++;
+      }
+      if (npc.expression === 'hen_gao' && ev.inFrame && ev.visibleRatio >= 0.33) {
+        henGaoCount++;
+      }
+      if (npc.expression === 'sneeze' && ev.inFrame && ev.visibleRatio >= 0.33) {
+        sneezeCount++;
+      }
+      if (
+        ev.inFrame &&
+        ev.visibleRatio >= 0.33 &&
+        (npc.lensBombProgress > 0.55 || ev.faceScreenSize > 0.24)
+      ) {
+        lensBombCount++;
       }
 
       if (
@@ -350,6 +442,20 @@ export class PhotoEvaluator {
       });
     }
 
+    // Compute 🤣 爆笑度 (comedyScore: 0..100 integer)
+    let rawComedy = 0;
+    if (intruderInFrame) rawComedy += 38;
+    rawComedy += flyingHatCount * 26;
+    rawComedy += sneezeCount * 28;
+    rawComedy += lensBombCount * 26;
+    rawComedy += henGaoCount * 22;
+    rawComedy += fallenCount * 18;
+    if (fallenCount >= 3) rawComedy += 14;
+    rawComedy += shoulderRideCount * 16;
+    rawComedy += jumpingCount * 12;
+    rawComedy += blinkingCount * 10;
+    const comedyScore = Math.round(clamp(rawComedy, 0, 100));
+
     const rank = this.scoreToRank(scores.totalScore);
     const comedyAward = this.detectComedyAward(
       evaluated,
@@ -359,6 +465,12 @@ export class PhotoEvaluator {
       visibleShoulderRideCount,
       blinkingCount,
       visibleCount,
+      intruderInFrame,
+      intruderKind,
+      flyingHatCount,
+      sneezeCount,
+      lensBombCount,
+      henGaoCount,
     );
 
     const { caption, subCaption } = this.generateCaptions(
@@ -375,10 +487,17 @@ export class PhotoEvaluator {
       blinkingCount,
       blockerVictims,
       comedyAward,
+      intruderInFrame,
+      intruderKind,
+      flyingHatCount,
+      sneezeCount,
+      lensBombCount,
+      henGaoCount,
     );
 
     return {
       totalScore: scores.totalScore,
+      comedyScore,
       rank,
       coverageScore: scores.coverageScore,
       expressionScore: scores.expressionScore,
@@ -392,6 +511,12 @@ export class PhotoEvaluator {
       jumpingCount,
       blinkingCount,
       shoulderRideCount,
+      flyingHatCount,
+      intruderInFrame,
+      intruderKind,
+      henGaoCount,
+      sneezeCount,
+      lensBombCount,
       caption,
       subCaption,
       comedyAward,
@@ -688,12 +813,14 @@ export class PhotoEvaluator {
 
     if (
       npc.action === 'fallen' ||
+      npc.expression === 'sneeze' ||
       npc.expression === 'blink' ||
       npc.expression === 'dizzy' ||
       edgeClipped
     ) {
       out.status = 'bad';
       if (npc.action === 'fallen') out.label = '転倒';
+      else if (npc.expression === 'sneeze') out.label = 'くしゃみ';
       else if (npc.expression === 'dizzy') out.label = 'クラクラ';
       else if (npc.expression === 'blink') out.label = 'まばたき';
       else out.label = '見切れ';
@@ -702,6 +829,7 @@ export class PhotoEvaluator {
 
     if (
       visibleRatio < 0.9 ||
+      npc.expression === 'hen_gao' ||
       !lookingAtCamera ||
       npc.expression === 'nervous' ||
       npc.expression === 'blink_warn' ||
@@ -709,6 +837,7 @@ export class PhotoEvaluator {
     ) {
       out.status = 'warn';
       if (visibleRatio < 0.9) out.label = 'かぶり';
+      else if (npc.expression === 'hen_gao') out.label = '変顔！';
       else if (npc.expression === 'blink_warn') out.label = 'うとうと';
       else if (npc.expression === 'surprised') out.label = 'びっくり';
       else if (!lookingAtCamera) out.label = 'よそ見';
@@ -1048,10 +1177,14 @@ export class PhotoEvaluator {
     const { npc, inFrame, edgeClipped, visibleRatio, lookingAtCamera } = ev;
 
     if (!inFrame) return 'フレーム外！';
+    if (npc.hatPopHeight > 0.16) return '帽子が飛んだ！';
+    if (npc.expression === 'sneeze') return '決定的クシャミ！';
+    if (npc.lensBombProgress > 0.55) return 'レンズ突撃！';
     if (npc.action === 'fallen') return '転倒中！';
     if (visibleRatio === 0) return '完全に隠れた';
     if (visibleRatio < 0.67) return '後ろに隠れた';
     if (edgeClipped) return '端で見切れ';
+    if (npc.expression === 'hen_gao') return '変顔テロ！';
     if (npc.expression === 'dizzy') return '目が回ってる';
     if (npc.expression === 'blink') return '目をつぶった';
     if (visibleRatio < 0.9) return 'ちょっとかぶり';
@@ -1111,8 +1244,71 @@ export class PhotoEvaluator {
     visibleShoulderRideCount: number,
     blinkingCount: number,
     visibleCount: number,
+    intruderInFrame: boolean,
+    intruderKind: 'dove' | 'deer' | null,
+    flyingHatCount: number,
+    sneezeCount: number,
+    lensBombCount: number,
+    henGaoCount: number,
   ): ComedyAward | null {
-    // 1. Domino disaster
+    // 0. High-comedy rare bakage captures (top priority!)
+    if (intruderInFrame && intruderKind === 'deer') {
+      return {
+        id: 'nara_deer',
+        badge: '🦌 奈良の刺客賞',
+        reason: '奈良のシカが記念写真のセンターを堂々ジャック！',
+      };
+    }
+
+    if (intruderInFrame && intruderKind === 'dove') {
+      return {
+        id: 'rogue_dove',
+        badge: '🕊️ ハト主役賞',
+        reason: '暴走ハトがカメラのど真ん中を華麗に強奪！',
+      };
+    }
+
+    if (fallenCount >= 3) {
+      return {
+        id: 'human_bowling',
+        badge: '💥 人間ボーリング賞',
+        reason: `${fallenCount}人がストライク級に連鎖転倒した歴史的珍場面！`,
+      };
+    }
+
+    if (sneezeCount >= 1) {
+      return {
+        id: 'sneeze_blast',
+        badge: '🤧 爆風クシャミ賞',
+        reason: 'くしゃみ一発で集合写真が吹き飛んだ決定的瞬間！',
+      };
+    }
+
+    if (flyingHatCount >= 1) {
+      return {
+        id: 'flying_hat',
+        badge: '🎩 決定的ポロリ賞',
+        reason: '重力に逆らって宙を舞う帽子を完璧キャッチ！',
+      };
+    }
+
+    if (lensBombCount >= 1) {
+      return {
+        id: 'lens_bomb',
+        badge: '😱 距離感バグ賞',
+        reason: 'カメラレンズ至近距離まで突撃して画面を制圧！',
+      };
+    }
+
+    if (henGaoCount >= 1) {
+      return {
+        id: 'hen_gao_terror',
+        badge: '🤪 変顔テロ賞',
+        reason: '一生残る記念写真に全力の変顔をブチ込んだ勇者！',
+      };
+    }
+
+    // 1. Domino disaster (2 fallen)
     if (fallenCount >= 2) {
       return {
         id: 'domino_disaster',
@@ -1222,9 +1418,65 @@ export class PhotoEvaluator {
     blinkingCount: number,
     blockerVictims: Map<string, Set<string>>,
     comedyAward: ComedyAward | null,
+    intruderInFrame: boolean,
+    intruderKind: 'dove' | 'deer' | null,
+    flyingHatCount: number,
+    sneezeCount: number,
+    lensBombCount: number,
+    henGaoCount: number,
   ): { caption: string; subCaption: string } {
     const totalCount = evaluated.length;
     const isWedding = stage.id === 'wedding';
+
+    // 0. High-comedy rare bakage headline captures!
+    if (intruderInFrame && intruderKind === 'deer') {
+      return {
+        caption: '🦌 鹿がセンター奪取！',
+        subCaption: '3年2組の新メンバー（奈良県出身）が堂々の主役。',
+      };
+    }
+
+    if (intruderInFrame && intruderKind === 'dove') {
+      return {
+        caption: '🕊️ ハト、顔面ドアップ乱入！',
+        subCaption: 'もはやハトの宣材写真。新郎新婦は背景です。',
+      };
+    }
+
+    if (fallenCount >= 3) {
+      return {
+        caption: '💥 歴史的ドミノ大惨事！',
+        subCaption: '記念撮影会場で人間ボーリング大会が開幕しました。',
+      };
+    }
+
+    if (sneezeCount >= 1) {
+      return {
+        caption: '🤧 世紀のハクション爆発！',
+        subCaption: 'くしゃみ一発で集合写真が戦場と化した瞬間。',
+      };
+    }
+
+    if (flyingHatCount >= 1) {
+      return {
+        caption: '🎩 帽子（カツラ？）宙に舞う！！',
+        subCaption: '重力に逆らう奇跡の1フレームを激写！',
+      };
+    }
+
+    if (lensBombCount >= 1) {
+      return {
+        caption: '😱 レンズに顔面ベッタリ！',
+        subCaption: '距離感バグりすぎ！画面の半分がお前だ！',
+      };
+    }
+
+    if (henGaoCount >= 1) {
+      return {
+        caption: '🤪 ひとりだけ変顔ガチ勢！',
+        subCaption: '一生残る写真でその顔は勇者すぎる。',
+      };
+    }
 
     // 1. S+ perfection moments
     if (rank === 'S+') {
@@ -1251,7 +1503,7 @@ export class PhotoEvaluator {
           };
     }
 
-    // 2. Domino disaster
+    // 2. Domino disaster (2 fallen)
     if (fallenCount >= 2) {
       return {
         caption: 'シャッターの瞬間、大惨事！',
